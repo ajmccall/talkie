@@ -11,19 +11,19 @@ already have (see [Skills](#skills-optional)).
 On an Apple silicon Mac running macOS 15 or later:
 
 ```sh
-brew install --cask --no-quarantine ajmccall/tap/talkie
+brew install --cask ajmccall/tap/talkie
+xattr -dr com.apple.quarantine /Applications/Talkie.app
 ```
 
 Or download `Talkie-<version>.zip` from
 [GitHub Releases](https://github.com/ajmccall/talkie/releases), unzip, drag
-`Talkie.app` to Applications, then run
-`xattr -dr com.apple.quarantine /Applications/Talkie.app` once.
+`Talkie.app` to Applications, then run the same `xattr` command once.
 
-Why the extra step: Talkie is not yet notarised by Apple, so Gatekeeper calls
-a downloaded copy "damaged" until the quarantine flag is removed. The
-`--no-quarantine` flag and the `xattr` command do exactly that and nothing
-else. (System Settings → Privacy & Security → "Open Anyway" also works.) This
-goes away once the app is notarised.
+Why the second line: Talkie is not yet notarised by Apple, so Gatekeeper
+calls a downloaded copy "damaged" until the quarantine flag is removed. The
+`xattr` command does exactly that and nothing else. (System Settings →
+Privacy & Security → "Open Anyway" also works.) This goes away once the app
+is notarised.
 
 Updates: `brew upgrade --cask talkie`. Uninstall: `brew uninstall --cask
 talkie`; the speech models stay cached, see [How it works](#how-it-works).
@@ -210,7 +210,7 @@ bump `version.env`, commit, then `make release-dry` to check and `make
 release` to publish. The script signs with a "Developer ID Application"
 certificate and notarises when one is present (set `TALKIE_NOTARY_PROFILE` to
 a `notarytool` keychain profile), otherwise it signs with Apple Development or
-ad-hoc and warns that users need `--no-quarantine`. It then tags `vx.y.z`,
+ad-hoc and warns that users need the `xattr` step. It then tags `vx.y.z`,
 creates the GitHub release with the zip, and updates `Casks/talkie.rb` in
 `ajmccall/homebrew-tap` (cloned to `../homebrew-tap` if missing). CI
 (`.github/workflows/build.yml`) builds, tests and uploads an ad-hoc zip as an

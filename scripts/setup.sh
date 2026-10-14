@@ -117,7 +117,7 @@ cat <<'EOF'
      Talkie picks the grant up automatically; no relaunch needed.
   3. Wait for the models to download (~2.6 GB, once). The menu-bar icon shows an arrow meanwhile.
   4. Hold Fn, speak, release.
-  (None of this script is needed to run a prebuilt Talkie: brew install --cask ajmccall/tap/talkie.)
+  (None of this script is needed to run a prebuilt Talkie: see Install in the README.)
 
 If the signature is ad-hoc (no "Apple Development" certificate on this Mac), macOS forgets
 the permission grants whenever you rebuild. Create a development certificate in Xcode

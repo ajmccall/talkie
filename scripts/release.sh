@@ -99,8 +99,8 @@ else
     echo "No certificate at all. Signing ad-hoc."
     warn "Ad-hoc signatures change every build, so macOS re-asks for Microphone and Accessibility after each update."
   fi
-  warn "This build is NOT notarised. Gatekeeper will call it damaged on other Macs unless they install with
-         brew install --cask --no-quarantine $TAP_REPO/talkie   (or: xattr -dr com.apple.quarantine /Applications/Talkie.app)
+  warn "This build is NOT notarised. Gatekeeper will call it damaged on other Macs until they run
+         xattr -dr com.apple.quarantine /Applications/Talkie.app
          Join the Apple Developer Program and add a 'Developer ID Application' certificate to fix this."
 fi
 
@@ -166,7 +166,7 @@ fi
 cat <<EOT
 
 Released Talkie $V.
-  Install:  brew install --cask $TAP_REPO/talkie
+  Install:  brew install --cask ${TAP_REPO/homebrew-/}/talkie && xattr -dr com.apple.quarantine /Applications/Talkie.app
   Upgrade:  brew update && brew upgrade --cask talkie
   Release:  https://github.com/$REPO/releases/tag/$TAG
 EOT

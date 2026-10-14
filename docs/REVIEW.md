@@ -129,7 +129,8 @@ FluidAudio and mlx-swift-lm are now pinned with `exact:` and
   cut locally by `scripts/release.sh` (see README, Releasing). Updates come
   through `brew upgrade`; there is no in-app updater.
 - Signing today is Apple Development (or ad-hoc), so downloads are quarantined
-  and Gatekeeper rejects them until `--no-quarantine` or `xattr`. The release
+  and Gatekeeper rejects them until `xattr -dr com.apple.quarantine` (Homebrew
+  7 no longer has a `--no-quarantine` flag). The release
   script switches to hardened runtime and notarisation on its own when a
   "Developer ID Application" certificate is in the keychain; whether MLX's
   runtime Metal compilation is happy under the hardened runtime is untested
