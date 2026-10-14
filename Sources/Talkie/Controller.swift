@@ -24,6 +24,7 @@ final class Controller {
     private var modelsReady = false
     private var isLoadingModels = false
     private var pressStartedAt: Date?
+    private var lastLabel: RecordingLabel.Label?
     private var levelTimer: Timer?
     private var maxDurationTimer: Timer?
     private var accessibilityTimer: Timer?
@@ -147,23 +148,40 @@ final class Controller {
         levelTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
+                self.updateRecordingLabel()
                 self.hud.setLevel(self.recorder.level)
             }
         }
         maxDurationTimer = Timer.scheduledTimer(withTimeInterval: Settings.maximumRecordingSeconds, repeats: false) { [weak self] _ in
             Task { @MainActor in
                 self?.logger.notice("Maximum recording length reached; stopping")
-                self?.finishRecording()
+                self?.finishRecording(reason: .cap)
             }
         }
+    }
+
+    /// Switches the HUD to an amber countdown as the maximum length approaches.
+    /// The text only changes once a second, so the HUD is re-laid-out rarely.
+    private func updateRecordingLabel() {
+        guard case .recording = state, let startedAt = pressStartedAt else { return }
+        let label = RecordingLabel.label(elapsed: Date().timeIntervalSince(startedAt))
+        guard label != lastLabel else { return }
+        if label.nearCap, !(lastLabel?.nearCap ?? false) {
+            Sounds.capApproaching()
+        }
+        lastLabel = label
+        hud.show(.init(kind: label.nearCap ? .warning : .recording, text: label.text))
     }
 
     private func fnReleased() {
         finishRecording()
     }
 
-    private func finishRecording() {
+    private enum StopReason { case released, cap }
+
+    private func finishRecording(reason: StopReason = .released) {
         guard case .recording = state else { return }
+        lastLabel = nil
         levelTimer?.invalidate()
         levelTimer = nil
         maxDurationTimer?.invalidate()
@@ -181,8 +199,9 @@ final class Controller {
         }
 
         Sounds.recordingStopped()
-        state = .processing("Transcribing…")
-        hud.show(.init(kind: .working, text: "Transcribing…"))
+        let message = reason == .cap ? "Max length reached, transcribing…" : "Transcribing…"
+        state = .processing(message)
+        hud.show(.init(kind: .working, text: message))
         Task { await process(recording) }
     }
 
@@ -199,10 +218,11 @@ final class Controller {
             }
 
             var text = raw
+            var outcome = CleanupOutcome.skipped
             if Settings.cleanupEnabled {
                 state = .processing("Cleaning up…")
                 hud.show(.init(kind: .working, text: "Cleaning up…"))
-                text = await cleanedOrRaw(raw)
+                (text, outcome) = await cleanedOrRaw(raw)
             }
             text = TextRules.apply(text)
             logger.info("Final: \(text, privacy: .private)")
@@ -211,7 +231,10 @@ final class Controller {
             try await Task.sleep(for: .milliseconds(Settings.pasteDelayMilliseconds))
             let pasted = Paster.pasteFromClipboard()
             Sounds.pasted()
-            hud.show(.init(kind: .success, text: pasted ? "Pasted" : "Copied (grant Accessibility to paste)"), autoHideAfter: 1.5)
+            hud.show(
+                .init(kind: .success, text: pasted ? outcome.pastedLabel : "Copied (grant Accessibility to paste)"),
+                autoHideAfter: outcome.hudSeconds
+            )
             state = .idle
         } catch {
             fail(error.localizedDescription)
@@ -219,20 +242,23 @@ final class Controller {
     }
 
     /// Runs the LLM with a timeout and a sanity check; any problem falls back to the raw transcript.
-    private func cleanedOrRaw(_ raw: String) async -> String {
+    private func cleanedOrRaw(_ raw: String) async -> (text: String, outcome: CleanupOutcome) {
         let cleaner = self.cleaner
         do {
             let cleaned = try await withTimeout(seconds: Settings.cleanupTimeoutSeconds) {
                 try await cleaner.clean(raw)
             }
             if Cleaner.looksSane(raw: raw, cleaned: cleaned) {
-                return cleaned
+                return (cleaned, .cleaned)
             }
             logger.notice("Cleanup output rejected by sanity check; pasting raw transcript")
-            return raw
+            return (raw, .rejected)
+        } catch TalkieError.timeout {
+            logger.error("Cleanup timed out after \(Int(Settings.cleanupTimeoutSeconds))s, pasting raw transcript")
+            return (raw, .timedOut)
         } catch {
             logger.error("Cleanup failed, pasting raw transcript: \(error.localizedDescription)")
-            return raw
+            return (raw, .failed)
         }
     }
 
@@ -241,5 +267,27 @@ final class Controller {
         Sounds.failed()
         hud.show(.init(kind: .failure, text: message), autoHideAfter: 4)
         state = .idle
+    }
+}
+
+/// How the cleanup step ended, so the paste message can say when raw text was used.
+enum CleanupOutcome: Equatable {
+    case cleaned, skipped, timedOut, rejected, failed
+
+    var pastedLabel: String {
+        switch self {
+        case .cleaned, .skipped: return "Pasted"
+        case .timedOut: return "Pasted (raw: cleanup timed out)"
+        case .rejected: return "Pasted (raw: cleanup rejected)"
+        case .failed: return "Pasted (raw: cleanup failed)"
+        }
+    }
+
+    /// Raw fallbacks stay on screen longer so the reason can be read.
+    var hudSeconds: TimeInterval {
+        switch self {
+        case .cleaned, .skipped: return 1.5
+        case .timedOut, .rejected, .failed: return 3
+        }
     }
 }

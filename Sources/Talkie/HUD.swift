@@ -6,7 +6,7 @@ import SwiftUI
 @MainActor
 final class HUD {
     struct Model {
-        enum Kind { case recording, working, success, failure }
+        enum Kind { case recording, warning, working, success, failure }
         var kind: Kind
         var text: String
     }
@@ -99,9 +99,9 @@ struct HUDView: View {
     @ViewBuilder
     private var indicator: some View {
         switch state.kind {
-        case .recording:
+        case .recording, .warning:
             Circle()
-                .fill(.red)
+                .fill(state.kind == .warning ? Color.orange : Color.red)
                 .frame(width: 10, height: 10)
                 .scaleEffect(1 + CGFloat(min(state.level, 1)) * 0.8)
                 .animation(.easeOut(duration: 0.08), value: state.level)

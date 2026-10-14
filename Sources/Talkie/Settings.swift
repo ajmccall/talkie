@@ -19,8 +19,13 @@ enum Settings {
     /// so a stuck key cannot fill memory indefinitely.
     static let maximumRecordingSeconds: TimeInterval = 300
 
+    /// The HUD switches to an amber countdown this long before the cap.
+    static let warningBeforeCapSeconds: TimeInterval = 30
+
     /// If the LLM has not answered within this time, the raw transcript is pasted.
-    static let cleanupTimeoutSeconds: TimeInterval = 20
+    /// A full 5-minute recording measured 15.8 s on an M4 Pro, so 20 s left no
+    /// headroom for slower Macs.
+    static let cleanupTimeoutSeconds: TimeInterval = 30
 
     /// Delay between putting text on the clipboard and sending ⌘V. Some apps
     /// (Electron, Java) need a moment to notice the new pasteboard contents.

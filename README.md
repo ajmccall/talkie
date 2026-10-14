@@ -91,10 +91,14 @@ shortcuts to the relevant privacy settings.
 ## Behaviour details
 
 - Presses shorter than 0.25 s, or recordings under 0.5 s, are ignored.
-- Recording stops by itself after 5 minutes.
-- If Qwen3 takes longer than 20 s, or returns something that is not a light
+- Recording stops by itself after 5 minutes. For the last 30 s the HUD turns
+  amber and counts down ("Listening… 4:35 · stops at 5:00") with a soft sound
+  when the countdown starts; if the cap cuts the recording, the HUD says
+  "Max length reached, transcribing…" and what was captured is still pasted.
+- If Qwen3 takes longer than 30 s, or returns something that is not a light
   edit (empty, more than double the length, or under a third of it), the raw
-  transcript is pasted instead.
+  transcript is pasted instead and the HUD says why, e.g.
+  "Pasted (raw: cleanup timed out)".
 - Fn pressed while models load or the previous dictation is still processing
   shows a message and does nothing.
 - The clipboard is deliberately left holding the dictated text.
