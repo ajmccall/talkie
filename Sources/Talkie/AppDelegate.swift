@@ -21,6 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var launchAtLoginMenuItem: NSMenuItem!
     private var retryMenuItem: NSMenuItem!
     private let controller = Controller()
+    private let welcome = WelcomeWindow()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildStatusItem()
@@ -30,7 +31,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         controller.onConnectionChange = { [weak self] _ in
             self?.renderSkillSection()
         }
+        welcome.retryModels = { [weak self] in self?.controller.reloadModels() }
         renderSkillSection()
+        // First launch: explain before the system permission prompts land on top.
+        if !Settings.welcomeShown {
+            Settings.welcomeShown = true
+            welcome.show()
+        }
         controller.start()
     }
 
@@ -54,6 +61,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusMenuItem = NSMenuItem(title: "Starting…", action: nil, keyEquivalent: "")
         statusMenuItem.isEnabled = false
         menu.addItem(statusMenuItem)
+        let welcomeItem = NSMenuItem(title: "Welcome / How Talkie works…", action: #selector(showWelcome), keyEquivalent: "")
+        welcomeItem.target = self
+        menu.addItem(welcomeItem)
         menu.addItem(.separator())
 
         cleanupMenuItem = NSMenuItem(title: "Clean up with Qwen3", action: #selector(toggleCleanup), keyEquivalent: "")
@@ -128,6 +138,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func render(_ state: Controller.State) {
+        welcome.update(models: state)
         let symbol: String
         let text: String
         var failed = false
@@ -419,11 +430,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         controller.reloadModels()
     }
 
+    @objc private func showWelcome() {
+        welcome.show()
+    }
+
     @objc private func openAccessibility() {
-        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
+        NSWorkspace.shared.open(SystemSettings.accessibility)
     }
 
     @objc private func openMicrophone() {
-        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!)
+        NSWorkspace.shared.open(SystemSettings.microphone)
     }
 }

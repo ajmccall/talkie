@@ -7,13 +7,16 @@
 #   make test       unit tests
 #   make selftest   run the transcribe → clean pipeline on an audio file (AUDIO=path)
 #   make uninstall  quit and remove /Applications/Talkie.app (models are kept)
+#   make release    tag, build, sign, publish to GitHub Releases and bump the Homebrew cask
+#   make release-dry  build, sign and zip only; prints the sha256
+#   make icon       regenerate Resources/Talkie.icns from Resources/icon-1024.png
 #   make clean      remove build output
 
 APP      := build/Talkie.app
 INSTALL  := /Applications/Talkie.app
 AUDIO    ?= build/selftest.aiff
 
-.PHONY: setup build app install run test selftest uninstall clean models-clean
+.PHONY: setup build app install run test selftest uninstall clean models-clean release release-dry icon
 
 setup:
 	scripts/setup.sh
@@ -26,6 +29,7 @@ app:
 
 install: app
 	@pkill -x Talkie 2>/dev/null || true
+	@while pgrep -x Talkie >/dev/null; do sleep 0.2; done
 	rm -rf "$(INSTALL)"
 	cp -R "$(APP)" "$(INSTALL)"
 	open "$(INSTALL)"
@@ -33,6 +37,7 @@ install: app
 
 run: app
 	@pkill -x Talkie 2>/dev/null || true
+	@while pgrep -x Talkie >/dev/null; do sleep 0.2; done
 	open "$(APP)"
 
 test:
@@ -48,11 +53,20 @@ selftest: build
 uninstall:
 	@pkill -x Talkie 2>/dev/null || true
 	rm -rf "$(INSTALL)"
-	@echo "Removed $(INSTALL). Models remain in ~/Library/Application Support/FluidAudio and ~/.cache/huggingface; run 'make models-clean' to delete them."
+	@echo "Removed $(INSTALL) (Homebrew installs: brew uninstall --cask talkie). Models remain in ~/Library/Application Support/FluidAudio and ~/.cache/huggingface; run 'make models-clean' to delete them."
 
 models-clean:
 	rm -rf "$(HOME)/Library/Application Support/FluidAudio/Models/parakeet-tdt-0.6b-v3"
 	rm -rf "$(HOME)/.cache/huggingface/hub/models--mlx-community--Qwen3-4B-4bit"
+
+release:
+	scripts/release.sh
+
+release-dry:
+	scripts/release.sh --dry-run
+
+icon:
+	scripts/build-icon.sh
 
 clean:
 	rm -rf .build build

@@ -9,6 +9,12 @@ enum Settings {
         set { defaults.set(newValue, forKey: "cleanupEnabled") }
     }
 
+    /// The Welcome window has been shown once on first launch.
+    static var welcomeShown: Bool {
+        get { defaults.bool(forKey: "welcomeShown") }
+        set { defaults.set(newValue, forKey: "welcomeShown") }
+    }
+
     /// Which set of sounds plays for start, stop, paste and failure.
     static var soundTheme: SoundTheme {
         get { defaults.string(forKey: "soundTheme").flatMap(SoundTheme.init(rawValue:)) ?? .chime }

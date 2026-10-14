@@ -122,3 +122,24 @@ FluidAudio and mlx-swift-lm are now pinned with `exact:` and
   dictated into stays frontmost. Losing key status (a click elsewhere) counts
   as Escape. After the picker closes, the paste waits 150 ms instead of 80 ms
   so the app underneath has its key window back before ⌘V arrives.
+
+## Distribution
+
+- Releases are zips on GitHub Releases plus a cask in `ajmccall/homebrew-tap`,
+  cut locally by `scripts/release.sh` (see README, Releasing). Updates come
+  through `brew upgrade`; there is no in-app updater.
+- Signing today is Apple Development (or ad-hoc), so downloads are quarantined
+  and Gatekeeper rejects them until `--no-quarantine` or `xattr`. The release
+  script switches to hardened runtime and notarisation on its own when a
+  "Developer ID Application" certificate is in the keychain; whether MLX's
+  runtime Metal compilation is happy under the hardened runtime is untested
+  until then (`Resources/Talkie.entitlements` is picked up if needed).
+- The cask zaps only bundle-id paths. The model caches
+  (`~/Library/Application Support/FluidAudio/Models`, `~/.cache/huggingface/hub`)
+  are shared with other tools and are left alone.
+- The Welcome window writes `AppleFnUsageType` through `CFPreferences`, the
+  same value `setup.sh` writes with `defaults`. HIToolbox picking the change up
+  without a logout has not been confirmed; the window's copy says to log out
+  if Fn still triggers Dictation.
+- CI runs on `macos-26` because MLX needs Xcode 26's Metal compiler; the
+  workflow uploads an ad-hoc zip as an artifact and has not been exercised yet.

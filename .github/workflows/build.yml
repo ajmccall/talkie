@@ -1,15 +1,18 @@
-# Builds and unit-tests Talkie on a macOS runner. Model downloads are not
-# exercised here; the self-test needs ~3 GB of weights and a GPU.
+# Builds and unit-tests Talkie on a macOS runner and uploads the ad-hoc signed
+# app as an artifact. Model downloads are not exercised here; the self-test
+# needs ~3 GB of weights and a GPU. Releases are cut locally (scripts/release.sh).
 name: build
 
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   build:
-    runs-on: macos-15
+    # macOS 26 images ship Xcode 26; MLX needs its Metal compiler.
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
       - name: Select Xcode
@@ -27,3 +30,12 @@ jobs:
         run: swift test
       - name: Assemble app
         run: TALKIE_SIGN_IDENTITY=- scripts/build-app.sh
+      - name: Zip app
+        run: |
+          source version.env
+          echo "MARKETING_VERSION=$MARKETING_VERSION" >> "$GITHUB_ENV"
+          /usr/bin/ditto -c -k --keepParent build/Talkie.app "build/Talkie-$MARKETING_VERSION.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Talkie-${{ env.MARKETING_VERSION }}
+          path: build/Talkie-*.zip

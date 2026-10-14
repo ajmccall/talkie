@@ -110,13 +110,14 @@ fi
 
 cat <<'EOF'
 
-==> Next steps (one-time, in the dialogs macOS shows)
+==> Next steps
+  Talkie opens a Welcome window with a checklist on first launch:
   1. Allow Microphone access.
   2. Allow Accessibility access. This lets Talkie see the Fn key system-wide and send ⌘V.
      Talkie picks the grant up automatically; no relaunch needed.
-  3. Wait for the menu-bar mic icon to stop showing the download arrow.
-     First launch downloads ~3 GB of models (Parakeet, Qwen3) and caches them.
+  3. Wait for the models to download (~2.6 GB, once). The menu-bar icon shows an arrow meanwhile.
   4. Hold Fn, speak, release.
+  (None of this script is needed to run a prebuilt Talkie: brew install --cask ajmccall/tap/talkie.)
 
 If the signature is ad-hoc (no "Apple Development" certificate on this Mac), macOS forgets
 the permission grants whenever you rebuild. Create a development certificate in Xcode
