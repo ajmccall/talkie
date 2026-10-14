@@ -94,7 +94,8 @@ FluidAudio and mlx-swift-lm are now pinned with `exact:` and
 ## Test coverage
 
 - `make test`: `TextRules`, `Cleaner.stripThinking`, `Cleaner.wordCount`,
-  `Cleaner.looksSane`, `withTimeout`.
+  `Cleaner.looksSane`, `withTimeout`, `ToneSynth` (note length, headroom,
+  WAV header, every theme defines every cue).
 - `make selftest`: full Parakeet → Qwen3 pipeline on a synthesised sentence
   with fillers and stutters. Expected output removes the fillers and keeps
   the wording.
@@ -105,6 +106,19 @@ FluidAudio and mlx-swift-lm are now pinned with `exact:` and
 - Skill text and the model's output are logged with `privacy: .private`, like
   transcripts. The skill file path and provider executable path are logged in
   the clear.
-- The Codex connection check runs at launch when configured and again before a
+- Claude Code runs as `claude -p` with `--tools ""`, `--disallowedTools mcp__*`,
+  `--strict-mcp-config`, `--disable-slash-commands`, `--no-session-persistence`
+  and `--permission-prompts none`; the environment drops `ANTHROPIC_API_KEY`,
+  `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_PROFILE` and
+  `CLAUDE_CODE_USE_*` so the subscription login is used, and sets
+  `CLAUDE_CODE_DISABLE_CLAUDE_MDS` and `CLAUDE_CODE_DISABLE_AUTO_MEMORY` so no
+  project or memory files reach the prompt. `CLAUDE_CONFIG_DIR` is set only
+  from the folder chosen in the menu.
+- The connection check runs at launch when configured and again before a
   dictation if the last check failed; a signed-out result is surfaced in the
   HUD at paste time rather than during recording.
+- The skill picker is a non-activating panel that overrides `canBecomeKey`, so
+  it receives arrows, Return and Escape without activating Talkie; the app you
+  dictated into stays frontmost. Losing key status (a click elsewhere) counts
+  as Escape. After the picker closes, the paste waits 150 ms instead of 80 ms
+  so the app underneath has its key window back before ⌘V arrives.

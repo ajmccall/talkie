@@ -2,8 +2,8 @@ import AppKit
 import os
 
 /// Orchestrates: Fn down → record → Fn up → transcribe → clean → (skill) → paste.
-/// Holding Shift during the dictation sends the result through the chosen skill
-/// via the connected model account.
+/// Holding Shift during the dictation opens a picker the moment Fn is released;
+/// the chosen skill runs on the cleaned text via the connected model account.
 @MainActor
 final class Controller {
     enum State {
@@ -11,6 +11,7 @@ final class Controller {
         case idle
         case recording
         case processing(String)
+        case choosing
         case failed(String)
     }
 
@@ -30,6 +31,7 @@ final class Controller {
     private let transcriber = Transcriber()
     private let cleaner = Cleaner()
     private let hud = HUD()
+    private let picker = SkillPicker()
 
     private var modelsReady = false
     private var isLoadingModels = false
@@ -105,7 +107,7 @@ final class Controller {
     @discardableResult
     private func performConnectionCheck(_ provider: any ModelProvider) async -> Bool {
         do {
-            let executable = try provider.locateExecutable(override: Settings.providerExecutableOverride)
+            let executable = try provider.locateExecutable(override: Settings.providerExecutableOverride(for: provider.kind))
             let account = try await provider.checkConnection(executable: executable)
             guard !Task.isCancelled else { return false }
             providerExecutable = executable
@@ -191,7 +193,7 @@ final class Controller {
         case .loadingModels:
             hud.show(.init(kind: .working, text: "Still loading models…"), autoHideAfter: 1.5)
             return
-        case .processing:
+        case .processing, .choosing:
             hud.show(.init(kind: .working, text: "Still working on the last one…"), autoHideAfter: 1.5)
             return
         case .recording:
@@ -231,7 +233,7 @@ final class Controller {
     /// The text only changes once a second, so the HUD is re-laid-out rarely.
     private func updateRecordingLabel() {
         guard case .recording = state, let startedAt = pressStartedAt else { return }
-        let skill = fnKey.shiftSeen && Settings.skillEnabled ? Settings.skillPath.map(SkillPrompt.name(ofSkillAt:)) : nil
+        let skill = fnKey.shiftSeen && Settings.skillEnabled ? Settings.preselectedSkillPath.map(SkillPrompt.name(ofSkillAt:)) : nil
         let label = RecordingLabel.label(elapsed: Date().timeIntervalSince(startedAt), skill: skill)
         guard label != lastLabel else { return }
         if label.nearCap, !(lastLabel?.nearCap ?? false) {
@@ -269,17 +271,42 @@ final class Controller {
         Sounds.recordingStopped()
         let message = reason == .cap ? "Max length reached, transcribing…" : "Transcribing…"
         state = .processing(message)
-        hud.show(.init(kind: .working, text: message))
-        Task { await process(recording, processorRequested: processorRequested) }
+
+        // With a skill requested and available, the picker replaces the HUD right
+        // away so the choice can be made while transcription runs.
+        let skills = processorRequested && Settings.skillEnabled && provider != nil ? Settings.skillChoices : []
+        var choice: Task<PickerResult, Never>?
+        if !skills.isEmpty {
+            hud.hide()
+            let picker = self.picker
+            let preselected = Settings.preselectedSkillPath
+            choice = Task { await picker.present(skills: skills, preselected: preselected) }
+            picker.setStatus(message, ready: false)
+        } else {
+            hud.show(.init(kind: .working, text: message))
+        }
+        Task { await process(recording, processorRequested: processorRequested, choice: choice) }
+    }
+
+    /// Progress text goes to the picker while it is up, otherwise to the HUD.
+    private func showProgress(_ text: String, pickerShown: Bool) {
+        state = .processing(text)
+        if pickerShown {
+            picker.setStatus(text, ready: false)
+        } else {
+            hud.show(.init(kind: .working, text: text))
+        }
     }
 
     // MARK: - Pipeline
 
-    private func process(_ recording: AudioRecorder.Recording, processorRequested: Bool) async {
+    private func process(_ recording: AudioRecorder.Recording, processorRequested: Bool, choice: Task<PickerResult, Never>?) async {
+        let pickerShown = choice != nil
         do {
             let raw = try await transcriber.transcribe(recording)
             logger.info("Raw: \(raw, privacy: .private)")
             guard !raw.isEmpty else {
+                if pickerShown { picker.dismiss() }
                 hud.show(.init(kind: .failure, text: "No speech detected"), autoHideAfter: 2)
                 state = .idle
                 return
@@ -288,20 +315,33 @@ final class Controller {
             var text = raw
             var outcome = CleanupOutcome.skipped
             if Settings.cleanupEnabled {
-                state = .processing("Cleaning up…")
-                hud.show(.init(kind: .working, text: "Cleaning up…"))
+                showProgress("Cleaning up…", pickerShown: pickerShown)
                 (text, outcome) = await cleanedOrRaw(raw)
             }
             text = TextRules.apply(text)
 
             var skillOutcome = SkillOutcome.notRequested
-            if processorRequested {
-                (text, skillOutcome) = await skillAppliedOrCleaned(text)
+            if let choice {
+                picker.setStatus("Ready", ready: true)
+                state = .choosing
+                let result = await choice.value
+                picker.dismiss()
+                switch result {
+                case .asIs:
+                    logger.info("Skill picker dismissed; pasting as-is")
+                    state = .processing("Pasting…")
+                case .skill(let skill):
+                    Settings.lastUsedSkillPath = skill.path
+                    (text, skillOutcome) = await skillAppliedOrCleaned(text, skillPath: skill.path)
+                }
+            } else if processorRequested {
+                skillOutcome = Settings.providerKind == nil || provider == nil ? .notConnected : .noSkill
+                logger.notice("Skill requested but unavailable: \(skillOutcome.pastedLabel ?? "")")
             }
             logger.info("Final: \(text, privacy: .private)")
 
             Paster.copy(text)
-            try await Task.sleep(for: .milliseconds(Settings.pasteDelayMilliseconds))
+            try await Task.sleep(for: .milliseconds(pickerShown ? Settings.pickerPasteDelayMilliseconds : Settings.pasteDelayMilliseconds))
             let pasted = Paster.pasteFromClipboard()
             Sounds.pasted()
             let label = skillOutcome.pastedLabel ?? outcome.pastedLabel
@@ -338,14 +378,10 @@ final class Controller {
 
     /// Sends the text through the chosen skill via the connected account, with a
     /// timeout; any problem falls back to the cleaned text.
-    private func skillAppliedOrCleaned(_ text: String) async -> (text: String, outcome: SkillOutcome) {
+    private func skillAppliedOrCleaned(_ text: String, skillPath: String) async -> (text: String, outcome: SkillOutcome) {
         guard let provider, Settings.providerKind != nil else {
             logger.notice("Skill requested but no model account connected")
             return (text, .notConnected)
-        }
-        guard let skillPath = Settings.skillPath else {
-            logger.notice("Skill requested but none chosen")
-            return (text, .noSkill)
         }
         let name = SkillPrompt.name(ofSkillAt: skillPath)
         state = .processing("Applying \(name)…")

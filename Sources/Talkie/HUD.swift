@@ -36,7 +36,7 @@ final class HUD {
         state.kind = model.kind
         state.text = model.text
         hideTask?.cancel()
-        position()
+        PanelPlacement.bottomCentre(panel)
         panel.orderFrontRegardless()
         if let seconds {
             hideTask = Task { [weak self] in
@@ -56,9 +56,14 @@ final class HUD {
         panel.orderOut(nil)
     }
 
+}
+
+/// Shared placement for the HUD and the skill picker.
+@MainActor
+enum PanelPlacement {
     /// Bottom-centre of the screen the pointer is on, which is where the user is
     /// looking; `NSScreen.main` is meaningless for an app with no key window.
-    private func position() {
+    static func bottomCentre(_ panel: NSWindow) {
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { $0.frame.contains(mouse) }
             ?? NSScreen.main

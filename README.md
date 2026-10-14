@@ -105,11 +105,21 @@ whose job is to rewrite text will do.
    `codex login` in Terminal and use **Check Connection**. If the CLI is
    somewhere unusual, **Choose Codex Executable…**. Talkie never sees your
    tokens; it only runs the CLI, which holds the login.
-2. **Choose Skill…** and pick a `SKILL.md`, for example
-   `~/.agents/skills/slack-reword/SKILL.md`. The skill is re-read on every
-   dictation, so edits apply immediately.
-3. Hold Fn and Shift, speak, release. The HUD shows "Listening… · reword" while
-   Shift is down, then "Applying reword…", then "Pasted via reword".
+2. **Skills ▸ Add Skill…** and pick one or more `SKILL.md` files, for example
+   `~/.agents/skills/slack-reword/SKILL.md`. Skills are re-read on every
+   dictation, so edits apply immediately. **Skills ▸ Remove ▸** takes one out
+   again; ticking an entry makes it the pre-selected skill.
+3. Hold Fn and Shift, speak, release. A picker appears in place of the HUD
+   the moment you let go, listing your skills with the last-used one
+   highlighted, and shows "Transcribing…" then "Ready" while Talkie works.
+   - **Enter** applies the highlighted skill (you can press it before "Ready";
+     it applies as soon as the text is there).
+   - **↑ ↓**, the mouse, or the number keys **1–9** change the highlight.
+   - **Escape**, or clicking into another window, pastes the transcription
+     as-is.
+   The picker takes keyboard focus without activating Talkie, so the app you
+   were in stays frontmost and receives the paste. Fn does nothing while the
+   picker is open.
 
 How a skill is run: Talkie wraps the skill and the transcript in a prompt that
 treats the transcript as data, forbids questions (the model assumes instead),
@@ -119,8 +129,23 @@ timeout (90 s) or bad response pastes the cleaned transcript instead and the
 HUD says why, e.g. "Pasted (reword failed: signed out)". Fn+Shift without a
 connected account or chosen skill pastes the cleaned transcript and says so.
 
-Claude Code is designed in as a second provider (`ProviderKind.claude`) but
-not implemented yet; only Codex is selectable today.
+**Claude Code** works the same way: **Connect Claude Code…** finds the
+`claude` CLI (`~/.local/bin`, Homebrew, or nvm) and checks `claude auth status`.
+Skills run with `claude -p`, no tools, no hooks, no CLAUDE.md or memory, and a
+JSON schema for the reply; the default model is `sonnet`. If your login lives
+in a profile folder rather than `~/.claude` (you set `CLAUDE_CONFIG_DIR` in the
+shell), point Talkie at it with **Choose Claude Config Folder…**. One account
+is connected at a time; Disconnect and connect the other to switch.
+
+## Sounds
+
+**Sounds ▸** in the menu picks a set of cues for start, stop, paste and
+failure. Soft Chime (the default), Marimba, Muted Glass and Minimal are
+synthesised by Talkie itself and kept quiet and rounded; macOS Sounds uses the
+bundled Tink, Pop, Glass and Basso; Off is silent. Choosing a theme plays its
+"pasted" sound, **Play Start, Stop, Pasted** runs through a whole dictation,
+and Quiet halves the volume. The notes behind each theme live in
+`Sources/Talkie/Sounds.swift` if you want to tune them.
 
 ## Behaviour details
 
@@ -137,6 +162,7 @@ not implemented yet; only Codex is selectable today.
   shows a message and does nothing.
 - A skill that fails or times out leaves the cleaned transcript to be pasted,
   with the reason in the HUD, same as the Qwen3 fallback above.
+- While the skill picker is open, Fn shows "Still working on the last one…".
 - The clipboard is deliberately left holding the dictated text.
 - Apps with Secure Keyboard Entry on (password fields, Terminal with the
   option enabled) swallow the synthetic ⌘V. The text is still on the clipboard.
@@ -152,8 +178,12 @@ not implemented yet; only Codex is selectable today.
 - `Sources/Talkie/Providers/`: the model-account protocol, the Codex
   implementation (CLI search order, sandbox flags, environment scrubbing) and
   the skill prompt wrapper.
+- `Sources/Talkie/SkillPicker.swift`: the Fn+Shift picker panel, its keys and
+  look; `SkillList` and `PickerNavigation` hold the pure logic.
+- `Sources/Talkie/Sounds.swift`: the sound themes as lists of notes
+  (frequency, decay, partials) rendered by `ToneSynth`.
 - `Sources/Talkie/Settings.swift`: hold, minimum-length, maximum-length,
-  cleanup and skill timeouts, and the paste delay.
+  cleanup and skill timeouts, and the paste delays.
 
 ## Logs
 

@@ -205,6 +205,48 @@ private func script(named name: String, in dir: URL, body: String) throws -> URL
     return url
 }
 
+@Suite("Skill list")
+struct SkillListTests {
+    @Test func migratesLegacySingleSkillOnlyIntoEmptyList() {
+        #expect(SkillList.migrate(legacy: "/a/SKILL.md", existing: []) == ["/a/SKILL.md"])
+        #expect(SkillList.migrate(legacy: "/a/SKILL.md", existing: ["/b"]) == ["/b"])
+        #expect(SkillList.migrate(legacy: nil, existing: []) == [])
+        #expect(SkillList.migrate(legacy: "", existing: []) == [])
+    }
+
+    @Test func addsWithoutDuplicatesAndKeepsOrder() {
+        let list = SkillList.add(["/b", "/a", "/b"], to: ["/a"])
+        #expect(list == ["/a", "/b"])
+        #expect(SkillList.remove("/a", from: list) == ["/b"])
+        #expect(SkillList.remove("/zzz", from: list) == list)
+    }
+
+    @Test func preselectsLastUsedThenFirst() {
+        #expect(SkillList.preselected(paths: ["/a", "/b"], lastUsed: "/b") == "/b")
+        #expect(SkillList.preselected(paths: ["/a", "/b"], lastUsed: "/gone") == "/a")
+        #expect(SkillList.preselected(paths: ["/a", "/b"], lastUsed: nil) == "/a")
+        #expect(SkillList.preselected(paths: [], lastUsed: "/a") == nil)
+    }
+}
+
+@Suite("Picker navigation")
+struct PickerNavigationTests {
+    @Test func arrowsWrap() {
+        #expect(PickerNavigation.move(.down, from: 0, count: 3) == 1)
+        #expect(PickerNavigation.move(.down, from: 2, count: 3) == 0)
+        #expect(PickerNavigation.move(.up, from: 0, count: 3) == 2)
+        #expect(PickerNavigation.move(.up, from: 1, count: 1) == 0)
+        #expect(PickerNavigation.move(.down, from: 0, count: 0) == 0)
+    }
+
+    @Test func numberKeysPickRows() {
+        #expect(PickerNavigation.index(forNumberKey: 1, count: 3) == 0)
+        #expect(PickerNavigation.index(forNumberKey: 3, count: 3) == 2)
+        #expect(PickerNavigation.index(forNumberKey: 4, count: 3) == nil)
+        #expect(PickerNavigation.index(forNumberKey: 0, count: 3) == nil)
+    }
+}
+
 /// Opt-in live check against the real Codex CLI and account:
 ///   TALKIE_LIVE=1 swift test --filter CodexLiveTests
 @Suite("Codex live", .enabled(if: ProcessInfo.processInfo.environment["TALKIE_LIVE"] == "1"))

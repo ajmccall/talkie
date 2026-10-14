@@ -14,8 +14,15 @@ enum ProviderKind: String, CaseIterable, Sendable {
         }
     }
 
-    /// Claude Code is designed in but not implemented yet; see docs for the recipe.
-    var isAvailable: Bool { self == .codex }
+    var isAvailable: Bool { true }
+
+    /// The command that signs the CLI in.
+    var loginCommand: String {
+        switch self {
+        case .codex: return "codex login"
+        case .claude: return "claude auth login"
+        }
+    }
 
     var defaultModel: String {
         switch self {
@@ -27,7 +34,7 @@ enum ProviderKind: String, CaseIterable, Sendable {
     func makeProvider() -> (any ModelProvider)? {
         switch self {
         case .codex: return CodexProvider()
-        case .claude: return nil
+        case .claude: return ClaudeProvider()
         }
     }
 }
@@ -57,8 +64,7 @@ enum ProviderError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .notFound(let kind): return "\(kind.displayName) CLI not found. Install it or choose the executable."
-        case .signedOut(.codex): return "Signed out. Run codex login in Terminal, then check the connection."
-        case .signedOut(let kind): return "Signed out of \(kind.displayName)."
+        case .signedOut(let kind): return "Signed out. Run \(kind.loginCommand) in Terminal, then check the connection."
         case .apiKeyLogin(let kind): return "\(kind.displayName) is using an API key. Sign in with your subscription instead."
         case .invalidResponse: return "The model returned an incomplete result."
         case .service(let message): return message

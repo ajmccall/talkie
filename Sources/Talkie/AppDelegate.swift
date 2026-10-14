@@ -4,17 +4,20 @@ import UniformTypeIdentifiers
 import os
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let logger = Logger(subsystem: "talkie", category: "app")
     private var statusItem: NSStatusItem!
     private var statusMenuItem: NSMenuItem!
     private var cleanupMenuItem: NSMenuItem!
     private var skillStatusItem: NSMenuItem!
     private var connectItem: NSMenuItem!
+    private var connectClaudeItem: NSMenuItem!
+    private var chooseConfigItem: NSMenuItem!
     private var checkConnectionItem: NSMenuItem!
     private var chooseExecutableItem: NSMenuItem!
     private var disconnectItem: NSMenuItem!
-    private var chooseSkillItem: NSMenuItem!
+    private var skillsItem: NSMenuItem!
+    private var skillsMenu: NSMenu!
     private var launchAtLoginMenuItem: NSMenuItem!
     private var retryMenuItem: NSMenuItem!
     private let controller = Controller()
@@ -58,6 +61,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         cleanupMenuItem.state = Settings.cleanupEnabled ? .on : .off
         menu.addItem(cleanupMenuItem)
 
+        let soundsItem = NSMenuItem(title: "Sounds", action: nil, keyEquivalent: "")
+        soundsItem.submenu = buildSoundsMenu()
+        menu.addItem(soundsItem)
+
         menu.addItem(.separator())
         skillStatusItem = NSMenuItem(title: "Skills: off", action: nil, keyEquivalent: "")
         skillStatusItem.isEnabled = false
@@ -67,6 +74,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         connectItem.target = self
         menu.addItem(connectItem)
 
+        connectClaudeItem = NSMenuItem(title: "Connect Claude Code…", action: #selector(connectClaude), keyEquivalent: "")
+        connectClaudeItem.target = self
+        menu.addItem(connectClaudeItem)
+
         checkConnectionItem = NSMenuItem(title: "Check Connection", action: #selector(checkConnection), keyEquivalent: "")
         checkConnectionItem.target = self
         menu.addItem(checkConnectionItem)
@@ -75,9 +86,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         chooseExecutableItem.target = self
         menu.addItem(chooseExecutableItem)
 
-        chooseSkillItem = NSMenuItem(title: "Choose Skill…", action: #selector(chooseSkill), keyEquivalent: "")
-        chooseSkillItem.target = self
-        menu.addItem(chooseSkillItem)
+        chooseConfigItem = NSMenuItem(title: "Choose Claude Config Folder…", action: #selector(chooseClaudeConfig), keyEquivalent: "")
+        chooseConfigItem.target = self
+        menu.addItem(chooseConfigItem)
+
+        skillsMenu = NSMenu(title: "Skills")
+        skillsMenu.delegate = self
+        skillsItem = NSMenuItem(title: "Skills", action: nil, keyEquivalent: "")
+        skillsItem.submenu = skillsMenu
+        menu.addItem(skillsItem)
 
         disconnectItem = NSMenuItem(title: "Disconnect", action: #selector(disconnect), keyEquivalent: "")
         disconnectItem.target = self
@@ -120,17 +137,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             text = "Loading models: \(detail)"
         case .idle:
             symbol = "mic"
-            if Settings.skillEnabled, let path = Settings.skillPath {
-                text = "Ready. Hold Fn to dictate, Fn+Shift for \(SkillPrompt.name(ofSkillAt: path))."
-            } else {
-                text = "Ready. Hold Fn to dictate."
-            }
+            text = Settings.skillEnabled ? "Ready. Hold Fn to dictate, Fn+Shift to pick a skill." : "Ready. Hold Fn to dictate."
         case .recording:
             symbol = "mic.fill"
             text = "Recording…"
         case .processing(let detail):
             symbol = "waveform"
             text = detail
+        case .choosing:
+            symbol = "waveform"
+            text = "Choosing a skill…"
         case .failed(let message):
             symbol = "exclamationmark.triangle"
             text = message
@@ -153,15 +169,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .failed(let message): skillStatusItem.title = "\(kindName): \(Self.shortStatus(message))"
         }
         connectItem.isHidden = configured
+        connectClaudeItem.isHidden = configured
         checkConnectionItem.isHidden = !configured
         chooseExecutableItem.isHidden = !configured
+        chooseExecutableItem.title = "Choose \(kindName) Executable…"
+        chooseConfigItem.isHidden = Settings.providerKind != .claude
         disconnectItem.isHidden = !configured
-        chooseSkillItem.isHidden = !configured
-        if let path = Settings.skillPath {
-            chooseSkillItem.title = "Skill: \(SkillPrompt.name(ofSkillAt: path))…"
-        } else {
-            chooseSkillItem.title = "Choose Skill…"
-        }
+        skillsItem.isHidden = !configured
+        let count = Settings.skillPaths.count
+        skillsItem.title = count == 0 ? "Skills (none added)" : "Skills (\(count))"
         render(controller.state)
     }
 
@@ -171,6 +187,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if lower.contains("not found") { return "not found" }
         if lower.contains("api key") { return "API key login" }
         return "connection failed"
+    }
+
+    @objc private func connectClaude() {
+        controller.connect(kind: .claude)
+        explainConnectionFailure(after: 20)
     }
 
     @objc private func connectCodex() {
@@ -199,7 +220,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     alert.informativeText = message
                     alert.addButton(withTitle: "OK")
                     alert.addButton(withTitle: "Choose Executable…")
-                    if alert.runModal() == .alertSecondButtonReturn { self.chooseExecutable() }
+                    if Settings.providerKind == .claude { alert.addButton(withTitle: "Choose Config Folder…") }
+                    switch alert.runModal() {
+                    case .alertSecondButtonReturn: self.chooseExecutable()
+                    case .alertThirdButtonReturn: self.chooseClaudeConfig()
+                    default: break
+                    }
                     return
                 default: return
                 }
@@ -210,35 +236,160 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func chooseExecutable() {
         NSApp.activate(ignoringOtherApps: true)
         let panel = NSOpenPanel()
-        panel.title = "Choose the Codex executable"
+        let kind = Settings.providerKind ?? .codex
+        panel.title = "Choose the \(kind.displayName) executable"
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.showsHiddenFiles = true
         panel.treatsFilePackagesAsDirectories = true
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        Settings.providerExecutableOverride = url.path
+        Settings.setProviderExecutableOverride(url.path, for: kind)
         controller.checkConnection()
         explainConnectionFailure(after: 20)
     }
 
-    @objc private func chooseSkill() {
+    /// For logins kept somewhere other than ~/.claude (a CLAUDE_CONFIG_DIR profile).
+    @objc private func chooseClaudeConfig() {
         NSApp.activate(ignoringOtherApps: true)
         let panel = NSOpenPanel()
-        panel.title = "Choose a SKILL.md to apply on Fn+Shift"
+        panel.title = "Choose the folder Claude Code is signed in from (usually ~/.claude)"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.showsHiddenFiles = true
+        panel.directoryURL = FileManager.default.homeDirectoryForCurrentUser
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        Settings.claudeConfigDirectory = url.path
+        controller.checkConnection()
+        explainConnectionFailure(after: 20)
+    }
+
+    /// The Skills submenu is rebuilt each time it opens: one entry per skill
+    /// (tick = highlighted first in the picker), then Add Skill… and a Remove submenu.
+    func menuWillOpen(_ menu: NSMenu) {
+        guard menu === skillsMenu else { return }
+        menu.removeAllItems()
+        let paths = Settings.skillPaths
+        let preselected = Settings.preselectedSkillPath
+        if paths.isEmpty {
+            let empty = NSMenuItem(title: "No skills added yet", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            menu.addItem(empty)
+        }
+        for path in paths {
+            let name = SkillPrompt.name(ofSkillAt: path)
+            let item = NSMenuItem(title: name, action: #selector(preselectSkill(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = path
+            item.state = path == preselected ? .on : .off
+            item.toolTip = path
+            menu.addItem(item)
+        }
+        menu.addItem(.separator())
+        let add = NSMenuItem(title: "Add Skill…", action: #selector(addSkills), keyEquivalent: "")
+        add.target = self
+        menu.addItem(add)
+        if !paths.isEmpty {
+            let removeMenu = NSMenu(title: "Remove")
+            for path in paths {
+                let remove = NSMenuItem(title: SkillPrompt.name(ofSkillAt: path), action: #selector(removeSkill(_:)), keyEquivalent: "")
+                remove.target = self
+                remove.representedObject = path
+                remove.toolTip = path
+                removeMenu.addItem(remove)
+            }
+            let removeItem = NSMenuItem(title: "Remove", action: nil, keyEquivalent: "")
+            removeItem.submenu = removeMenu
+            menu.addItem(removeItem)
+        }
+    }
+
+    @objc private func preselectSkill(_ sender: NSMenuItem) {
+        Settings.lastUsedSkillPath = sender.representedObject as? String
+    }
+
+    @objc private func removeSkill(_ sender: NSMenuItem) {
+        guard let path = sender.representedObject as? String else { return }
+        Settings.skillPaths = SkillList.remove(path, from: Settings.skillPaths)
+        if Settings.lastUsedSkillPath == path { Settings.lastUsedSkillPath = nil }
+        renderSkillSection()
+    }
+
+    @objc private func addSkills() {
+        NSApp.activate(ignoringOtherApps: true)
+        let panel = NSOpenPanel()
+        panel.title = "Add SKILL.md files to the Fn+Shift picker"
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
         panel.showsHiddenFiles = true
         panel.allowedContentTypes = [.init(filenameExtension: "md")].compactMap { $0 }
         let skills = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".agents/skills")
         if FileManager.default.fileExists(atPath: skills.path) { panel.directoryURL = skills }
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        Settings.skillPath = url.path
+        guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
+        Settings.skillPaths = SkillList.add(panel.urls.map(\.path), to: Settings.skillPaths)
         renderSkillSection()
     }
 
     @objc private func disconnect() {
         controller.disconnect()
         renderSkillSection()
+    }
+
+    /// Themes and volume as radio groups. Picking a theme plays its "pasted"
+    /// sound so the options can be compared without dictating anything.
+    private func buildSoundsMenu() -> NSMenu {
+        let menu = NSMenu(title: "Sounds")
+        for theme in SoundTheme.allCases {
+            let item = NSMenuItem(title: theme.title, action: #selector(selectSoundTheme(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = theme.rawValue
+            item.toolTip = theme.subtitle
+            item.state = theme == Settings.soundTheme ? .on : .off
+            menu.addItem(item)
+        }
+        menu.addItem(.separator())
+        for volume in SoundVolume.allCases {
+            let item = NSMenuItem(title: volume.title, action: #selector(selectSoundVolume(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = volume.rawValue
+            item.state = volume == Settings.soundVolume ? .on : .off
+            menu.addItem(item)
+        }
+        menu.addItem(.separator())
+        let sample = NSMenuItem(title: "Play Start, Stop, Pasted", action: #selector(playSoundSample), keyEquivalent: "")
+        sample.target = self
+        menu.addItem(sample)
+        return menu
+    }
+
+    @objc private func selectSoundTheme(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let theme = SoundTheme(rawValue: raw) else { return }
+        Settings.soundTheme = theme
+        for item in sender.menu?.items ?? [] where item.action == #selector(selectSoundTheme(_:)) {
+            item.state = (item.representedObject as? String) == raw ? .on : .off
+        }
+        Sounds.preview(.pasted, theme: theme)
+    }
+
+    @objc private func selectSoundVolume(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let volume = SoundVolume(rawValue: raw) else { return }
+        Settings.soundVolume = volume
+        for item in sender.menu?.items ?? [] where item.action == #selector(selectSoundVolume(_:)) {
+            item.state = (item.representedObject as? String) == raw ? .on : .off
+        }
+        Sounds.preview(.pasted, theme: Settings.soundTheme)
+    }
+
+    /// The three sounds of a dictation, spaced as they would be in use.
+    @objc private func playSoundSample() {
+        let theme = Settings.soundTheme
+        Task { @MainActor in
+            Sounds.preview(.recordingStarted, theme: theme)
+            try? await Task.sleep(for: .milliseconds(900))
+            Sounds.preview(.recordingStopped, theme: theme)
+            try? await Task.sleep(for: .milliseconds(900))
+            Sounds.preview(.pasted, theme: theme)
+        }
     }
 
     @objc private func toggleCleanup() {

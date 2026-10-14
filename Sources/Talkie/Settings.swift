@@ -9,6 +9,17 @@ enum Settings {
         set { defaults.set(newValue, forKey: "cleanupEnabled") }
     }
 
+    /// Which set of sounds plays for start, stop, paste and failure.
+    static var soundTheme: SoundTheme {
+        get { defaults.string(forKey: "soundTheme").flatMap(SoundTheme.init(rawValue:)) ?? .chime }
+        set { defaults.set(newValue.rawValue, forKey: "soundTheme") }
+    }
+
+    static var soundVolume: SoundVolume {
+        get { defaults.string(forKey: "soundVolume").flatMap(SoundVolume.init(rawValue:)) ?? .normal }
+        set { defaults.set(newValue.rawValue, forKey: "soundVolume") }
+    }
+
     // MARK: - Optional skill post-processing (Fn+Shift)
 
     /// The connected model account, or nil when skills are off.
@@ -17,10 +28,24 @@ enum Settings {
         set { defaults.set(newValue?.rawValue, forKey: "provider") }
     }
 
-    /// Explicit CLI path chosen by the user; empty means auto-detect.
-    static var providerExecutableOverride: String? {
-        get { defaults.string(forKey: "providerExecutable") }
-        set { defaults.set(newValue, forKey: "providerExecutable") }
+    /// Explicit CLI path chosen by the user for one provider; empty means auto-detect.
+    /// Earlier versions stored a single path, which belonged to Codex.
+    static func providerExecutableOverride(for kind: ProviderKind) -> String? {
+        defaults.string(forKey: "providerExecutable.\(kind.rawValue)")
+            ?? (kind == .codex ? defaults.string(forKey: "providerExecutable") : nil)
+    }
+
+    static func setProviderExecutableOverride(_ path: String?, for kind: ProviderKind) {
+        defaults.set(path, forKey: "providerExecutable.\(kind.rawValue)")
+        if kind == .codex { defaults.removeObject(forKey: "providerExecutable") }
+    }
+
+    /// Claude Code keeps its login in a config folder (`~/.claude` unless
+    /// `CLAUDE_CONFIG_DIR` is set in the shell). Talkie is not launched from a
+    /// shell, so a non-default folder is chosen here.
+    static var claudeConfigDirectory: String? {
+        get { defaults.string(forKey: "claudeConfigDirectory") }
+        set { defaults.set(newValue, forKey: "claudeConfigDirectory") }
     }
 
     static var providerModel: String {
@@ -28,13 +53,36 @@ enum Settings {
         set { defaults.set(newValue, forKey: "providerModel") }
     }
 
-    /// Path to the SKILL.md applied on Fn+Shift.
-    static var skillPath: String? {
-        get { defaults.string(forKey: "skillPath") }
-        set { defaults.set(newValue, forKey: "skillPath") }
+    /// SKILL.md files offered by the Fn+Shift picker, in the order added.
+    /// Seeds itself from the single `skillPath` setting of earlier versions.
+    static var skillPaths: [String] {
+        get {
+            let stored = defaults.stringArray(forKey: "skillPaths") ?? []
+            let migrated = SkillList.migrate(legacy: defaults.string(forKey: "skillPath"), existing: stored)
+            if migrated != stored {
+                defaults.set(migrated, forKey: "skillPaths")
+                defaults.removeObject(forKey: "skillPath")
+            }
+            return migrated
+        }
+        set { defaults.set(newValue, forKey: "skillPaths") }
     }
 
-    static var skillEnabled: Bool { providerKind != nil && skillPath != nil }
+    /// Highlighted first in the picker next time.
+    static var lastUsedSkillPath: String? {
+        get { defaults.string(forKey: "lastUsedSkill") }
+        set { defaults.set(newValue, forKey: "lastUsedSkill") }
+    }
+
+    static var preselectedSkillPath: String? {
+        SkillList.preselected(paths: skillPaths, lastUsed: lastUsedSkillPath)
+    }
+
+    static var skillChoices: [SkillChoice] {
+        skillPaths.map { SkillChoice(path: $0, name: SkillPrompt.name(ofSkillAt: $0)) }
+    }
+
+    static var skillEnabled: Bool { providerKind != nil && !skillPaths.isEmpty }
 
     /// Presses shorter than this are treated as accidental and ignored.
     static let minimumHoldSeconds: TimeInterval = 0.25
@@ -61,4 +109,8 @@ enum Settings {
     /// Delay between putting text on the clipboard and sending ⌘V. Some apps
     /// (Electron, Java) need a moment to notice the new pasteboard contents.
     static let pasteDelayMilliseconds = 80
+
+    /// Longer delay after the skill picker closes: it held keyboard focus, and the
+    /// app underneath needs a moment to get it back before ⌘V arrives.
+    static let pickerPasteDelayMilliseconds = 150
 }
