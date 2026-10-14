@@ -17,12 +17,14 @@ enum RecordingLabel {
     static func label(
         elapsed: TimeInterval,
         cap: TimeInterval = Settings.maximumRecordingSeconds,
-        warnBefore: TimeInterval = Settings.warningBeforeCapSeconds
+        warnBefore: TimeInterval = Settings.warningBeforeCapSeconds,
+        skill: String? = nil
     ) -> Label {
+        let suffix = skill.map { " · \($0)" } ?? ""
         let shown = min(elapsed, cap)
         guard shown >= cap - warnBefore else {
-            return Label(text: "Listening…", nearCap: false)
+            return Label(text: "Listening…\(suffix)", nearCap: false)
         }
-        return Label(text: "Listening… \(clock(shown)) · stops at \(clock(cap))", nearCap: true)
+        return Label(text: "Listening… \(clock(shown)) · stops at \(clock(cap))\(suffix)", nearCap: true)
     }
 }

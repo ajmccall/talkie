@@ -1,7 +1,9 @@
 import AppKit
 import os
 
-/// Orchestrates: Fn down → record → Fn up → transcribe → clean → paste.
+/// Orchestrates: Fn down → record → Fn up → transcribe → clean → (skill) → paste.
+/// Holding Shift during the dictation sends the result through the chosen skill
+/// via the connected model account.
 @MainActor
 final class Controller {
     enum State {
@@ -12,7 +14,15 @@ final class Controller {
         case failed(String)
     }
 
+    enum ConnectionState: Equatable {
+        case notConfigured
+        case checking
+        case connected(ProviderAccount)
+        case failed(String)
+    }
+
     var onStateChange: ((State) -> Void)?
+    var onConnectionChange: ((ConnectionState) -> Void)?
 
     private let logger = Logger(subsystem: "talkie", category: "controller")
     private let fnKey = FnKeyMonitor()
@@ -28,18 +38,26 @@ final class Controller {
     private var levelTimer: Timer?
     private var maxDurationTimer: Timer?
     private var accessibilityTimer: Timer?
+    private var provider: (any ModelProvider)?
+    private var providerExecutable: URL?
+    private var connectionTask: Task<Void, Never>?
 
     private(set) var state: State = .loadingModels("starting") {
         didSet { onStateChange?(state) }
     }
 
+    private(set) var connection: ConnectionState = .notConfigured {
+        didSet { onConnectionChange?(connection) }
+    }
+
     func start() {
         fnKey.onPress = { [weak self] in self?.fnPressed() }
-        fnKey.onRelease = { [weak self] in self?.fnReleased() }
+        fnKey.onRelease = { [weak self] shift in self?.fnReleased(processorRequested: shift) }
         fnKey.start()
 
         Task { await requestPermissions() }
         Task { await loadModels() }
+        if Settings.providerKind != nil { checkConnection() }
     }
 
     func stop() {
@@ -53,6 +71,55 @@ final class Controller {
     /// Re-attempt model download/load, e.g. after a network failure.
     func reloadModels() {
         Task { await loadModels() }
+    }
+
+    // MARK: - Model account
+
+    func connect(kind: ProviderKind) {
+        Settings.providerKind = kind
+        checkConnection()
+    }
+
+    func disconnect() {
+        connectionTask?.cancel()
+        Settings.providerKind = nil
+        provider = nil
+        providerExecutable = nil
+        connection = .notConfigured
+    }
+
+    /// Locates the CLI and asks it for its login state. Safe to call repeatedly.
+    func checkConnection() {
+        connectionTask?.cancel()
+        guard let kind = Settings.providerKind, let provider = kind.makeProvider() else {
+            connection = .notConfigured
+            return
+        }
+        self.provider = provider
+        connection = .checking
+        connectionTask = Task { [weak self] in
+            await self?.performConnectionCheck(provider)
+        }
+    }
+
+    @discardableResult
+    private func performConnectionCheck(_ provider: any ModelProvider) async -> Bool {
+        do {
+            let executable = try provider.locateExecutable(override: Settings.providerExecutableOverride)
+            let account = try await provider.checkConnection(executable: executable)
+            guard !Task.isCancelled else { return false }
+            providerExecutable = executable
+            connection = .connected(account)
+            logger.info("\(provider.kind.displayName) connected (\(account.summary)) via \(executable.path)")
+            return true
+        } catch {
+            guard !Task.isCancelled else { return false }
+            providerExecutable = nil
+            let message = (error as? ProviderError)?.errorDescription ?? error.localizedDescription
+            connection = .failed(message)
+            logger.error("\(provider.kind.displayName) connection failed: \(message)")
+            return false
+        }
     }
 
     // MARK: - Setup
@@ -155,7 +222,7 @@ final class Controller {
         maxDurationTimer = Timer.scheduledTimer(withTimeInterval: Settings.maximumRecordingSeconds, repeats: false) { [weak self] _ in
             Task { @MainActor in
                 self?.logger.notice("Maximum recording length reached; stopping")
-                self?.finishRecording(reason: .cap)
+                self?.finishRecording(reason: .cap, processorRequested: self?.fnKey.shiftSeen ?? false)
             }
         }
     }
@@ -164,7 +231,8 @@ final class Controller {
     /// The text only changes once a second, so the HUD is re-laid-out rarely.
     private func updateRecordingLabel() {
         guard case .recording = state, let startedAt = pressStartedAt else { return }
-        let label = RecordingLabel.label(elapsed: Date().timeIntervalSince(startedAt))
+        let skill = fnKey.shiftSeen && Settings.skillEnabled ? Settings.skillPath.map(SkillPrompt.name(ofSkillAt:)) : nil
+        let label = RecordingLabel.label(elapsed: Date().timeIntervalSince(startedAt), skill: skill)
         guard label != lastLabel else { return }
         if label.nearCap, !(lastLabel?.nearCap ?? false) {
             Sounds.capApproaching()
@@ -173,13 +241,13 @@ final class Controller {
         hud.show(.init(kind: label.nearCap ? .warning : .recording, text: label.text))
     }
 
-    private func fnReleased() {
-        finishRecording()
+    private func fnReleased(processorRequested: Bool) {
+        finishRecording(reason: .released, processorRequested: processorRequested)
     }
 
     private enum StopReason { case released, cap }
 
-    private func finishRecording(reason: StopReason = .released) {
+    private func finishRecording(reason: StopReason, processorRequested: Bool) {
         guard case .recording = state else { return }
         lastLabel = nil
         levelTimer?.invalidate()
@@ -202,12 +270,12 @@ final class Controller {
         let message = reason == .cap ? "Max length reached, transcribing…" : "Transcribing…"
         state = .processing(message)
         hud.show(.init(kind: .working, text: message))
-        Task { await process(recording) }
+        Task { await process(recording, processorRequested: processorRequested) }
     }
 
     // MARK: - Pipeline
 
-    private func process(_ recording: AudioRecorder.Recording) async {
+    private func process(_ recording: AudioRecorder.Recording, processorRequested: Bool) async {
         do {
             let raw = try await transcriber.transcribe(recording)
             logger.info("Raw: \(raw, privacy: .private)")
@@ -225,15 +293,21 @@ final class Controller {
                 (text, outcome) = await cleanedOrRaw(raw)
             }
             text = TextRules.apply(text)
+
+            var skillOutcome = SkillOutcome.notRequested
+            if processorRequested {
+                (text, skillOutcome) = await skillAppliedOrCleaned(text)
+            }
             logger.info("Final: \(text, privacy: .private)")
 
             Paster.copy(text)
             try await Task.sleep(for: .milliseconds(Settings.pasteDelayMilliseconds))
             let pasted = Paster.pasteFromClipboard()
             Sounds.pasted()
+            let label = skillOutcome.pastedLabel ?? outcome.pastedLabel
             hud.show(
-                .init(kind: .success, text: pasted ? outcome.pastedLabel : "Copied (grant Accessibility to paste)"),
-                autoHideAfter: outcome.hudSeconds
+                .init(kind: .success, text: pasted ? label : "Copied (grant Accessibility to paste)"),
+                autoHideAfter: skillOutcome.hudSeconds ?? outcome.hudSeconds
             )
             state = .idle
         } catch {
@@ -260,6 +334,63 @@ final class Controller {
             logger.error("Cleanup failed, pasting raw transcript: \(error.localizedDescription)")
             return (raw, .failed)
         }
+    }
+
+    /// Sends the text through the chosen skill via the connected account, with a
+    /// timeout; any problem falls back to the cleaned text.
+    private func skillAppliedOrCleaned(_ text: String) async -> (text: String, outcome: SkillOutcome) {
+        guard let provider, Settings.providerKind != nil else {
+            logger.notice("Skill requested but no model account connected")
+            return (text, .notConnected)
+        }
+        guard let skillPath = Settings.skillPath else {
+            logger.notice("Skill requested but none chosen")
+            return (text, .noSkill)
+        }
+        let name = SkillPrompt.name(ofSkillAt: skillPath)
+        state = .processing("Applying \(name)…")
+        hud.show(.init(kind: .working, text: "Applying \(name)…"))
+
+        if providerExecutable == nil {
+            connectionTask?.cancel()
+            connection = .checking
+            _ = await performConnectionCheck(provider)
+        }
+        guard let executable = providerExecutable else {
+            let reason = (connection == .checking) ? "not connected" : shortFailure
+            return (text, .failed(name, reason))
+        }
+
+        let started = Date()
+        do {
+            let skill = try SkillPrompt.load(at: skillPath)
+            let model = Settings.providerModel
+            let applied = try await withTimeout(seconds: Settings.skillTimeoutSeconds) {
+                try await provider.transform(text, skill: skill, model: model, executable: executable)
+            }
+            logger.info("Skill \(name) applied in \(Date().timeIntervalSince(started), format: .fixed(precision: 2))s")
+            return (TextRules.apply(applied), .applied(name))
+        } catch TalkieError.timeout {
+            logger.error("Skill \(name) timed out after \(Int(Settings.skillTimeoutSeconds))s, pasting cleaned text")
+            return (text, .timedOut(name))
+        } catch let error as ProviderError {
+            if case .signedOut = error { connection = .failed(error.errorDescription ?? "signed out") }
+            logger.error("Skill \(name) failed, pasting cleaned text: \(error.localizedDescription)")
+            return (text, .failed(name, error.shortDescription))
+        } catch {
+            logger.error("Skill \(name) failed, pasting cleaned text: \(error.localizedDescription)")
+            return (text, .failed(name, String(error.localizedDescription.prefix(40))))
+        }
+    }
+
+    private var shortFailure: String {
+        if case .failed(let message) = connection {
+            let lower = message.lowercased()
+            if lower.contains("signed out") { return "signed out" }
+            if lower.contains("not found") { return "CLI not found" }
+            if lower.contains("api key") { return "API key login" }
+        }
+        return "not connected"
     }
 
     private func fail(_ message: String) {

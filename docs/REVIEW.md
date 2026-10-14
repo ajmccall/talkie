@@ -99,3 +99,12 @@ FluidAudio and mlx-swift-lm are now pinned with `exact:` and
   with fillers and stutters. Expected output removes the fillers and keeps
   the wording.
 - Manual: Fn hold/release, HUD, sounds, paste, permission flow.
+
+## Skills (Fn+Shift)
+
+- Skill text and the model's output are logged with `privacy: .private`, like
+  transcripts. The skill file path and provider executable path are logged in
+  the clear.
+- The Codex connection check runs at launch when configured and again before a
+  dictation if the last check failed; a signed-out result is surfaced in the
+  HUD at paste time rather than during recording.

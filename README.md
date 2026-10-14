@@ -2,7 +2,9 @@
 
 Hold the Fn key, talk, let go. Talkie transcribes what you said on-device,
 tidies it up with a small local language model, and pastes it wherever your
-cursor is. No accounts, no cloud, no subscription.
+cursor is. No accounts, no cloud, no subscription. Optionally, hold Shift as
+well to send that dictation through a skill using your own Codex subscription
+(see [Skills](#skills-optional-uses-your-model-subscription)).
 
 ## How it works
 
@@ -85,8 +87,40 @@ Settings → Accounts → Manage Certificates.
 | `make uninstall` | Quit and remove the app. Models stay cached; `make models-clean` deletes them |
 
 Menu-bar items: toggle the Qwen3 cleanup (raw Parakeet text is pasted when
-off), Launch at Login, Retry Loading Models (shown after a failure), and
-shortcuts to the relevant privacy settings.
+off), the skills section (connect a model account, choose a skill), Launch at
+Login, Retry Loading Models (shown after a failure), and shortcuts to the
+relevant privacy settings.
+
+## Skills (optional, uses your model subscription)
+
+Fn alone is the whole product and never leaves the machine. Optionally, you
+can connect a model account and choose a skill, and then holding **Shift** at
+any point while Fn is held sends that one dictation through the skill before
+it is pasted. The immediate use is the Slack reword skill, but any SKILL.md
+whose job is to rewrite text will do.
+
+1. **Connect Codex…** in the menu. Talkie looks for the Codex CLI in the usual
+   places (the ChatGPT and Codex apps, `~/.local/bin`, Homebrew, and the newest
+   nvm install) and asks it whether it is signed in with ChatGPT. If not, run
+   `codex login` in Terminal and use **Check Connection**. If the CLI is
+   somewhere unusual, **Choose Codex Executable…**. Talkie never sees your
+   tokens; it only runs the CLI, which holds the login.
+2. **Choose Skill…** and pick a `SKILL.md`, for example
+   `~/.agents/skills/slack-reword/SKILL.md`. The skill is re-read on every
+   dictation, so edits apply immediately.
+3. Hold Fn and Shift, speak, release. The HUD shows "Listening… · reword" while
+   Shift is down, then "Applying reword…", then "Pasted via reword".
+
+How a skill is run: Talkie wraps the skill and the transcript in a prompt that
+treats the transcript as data, forbids questions (the model assumes instead),
+forbids tools, and asks for structured JSON. Codex runs ephemeral and
+read-only with every tool disabled, exactly as the Reword app does. A failure,
+timeout (90 s) or bad response pastes the cleaned transcript instead and the
+HUD says why, e.g. "Pasted (reword failed: signed out)". Fn+Shift without a
+connected account or chosen skill pastes the cleaned transcript and says so.
+
+Claude Code is designed in as a second provider (`ProviderKind.claude`) but
+not implemented yet; only Codex is selectable today.
 
 ## Behaviour details
 
@@ -101,6 +135,8 @@ shortcuts to the relevant privacy settings.
   "Pasted (raw: cleanup timed out)".
 - Fn pressed while models load or the previous dictation is still processing
   shows a message and does nothing.
+- A skill that fails or times out leaves the cleaned transcript to be pasted,
+  with the reason in the HUD, same as the Qwen3 fallback above.
 - The clipboard is deliberately left holding the dictated text.
 - Apps with Secure Keyboard Entry on (password fields, Terminal with the
   option enabled) swallow the synthetic ⌘V. The text is still on the clipboard.
@@ -113,8 +149,11 @@ shortcuts to the relevant privacy settings.
   and marginally better on English; `.v3` adds 24 more languages.
 - `Sources/Talkie/TextRules.swift`: deterministic rules applied after the
   model. Add vocabulary substitutions or formatting rules there.
+- `Sources/Talkie/Providers/`: the model-account protocol, the Codex
+  implementation (CLI search order, sandbox flags, environment scrubbing) and
+  the skill prompt wrapper.
 - `Sources/Talkie/Settings.swift`: hold, minimum-length, maximum-length,
-  timeout and paste-delay thresholds.
+  cleanup and skill timeouts, and the paste delay.
 
 ## Logs
 
@@ -130,6 +169,7 @@ data in the logging profile.
 
 ```
 Sources/Talkie/      app code (menu bar, hotkey, audio, ASR, LLM, paste, HUD)
+Sources/Talkie/Providers/  optional skill post-processing via a connected CLI (Codex)
 Tests/TalkieTests/   unit tests for the pure helpers
 Resources/           Info.plist
 scripts/             build-app.sh (assemble + sign), setup.sh (new machine)

@@ -1,5 +1,6 @@
 import AppKit
 import ServiceManagement
+import UniformTypeIdentifiers
 import os
 
 @MainActor
@@ -8,6 +9,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var statusMenuItem: NSMenuItem!
     private var cleanupMenuItem: NSMenuItem!
+    private var skillStatusItem: NSMenuItem!
+    private var connectItem: NSMenuItem!
+    private var checkConnectionItem: NSMenuItem!
+    private var chooseExecutableItem: NSMenuItem!
+    private var disconnectItem: NSMenuItem!
+    private var chooseSkillItem: NSMenuItem!
     private var launchAtLoginMenuItem: NSMenuItem!
     private var retryMenuItem: NSMenuItem!
     private let controller = Controller()
@@ -17,6 +24,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.onStateChange = { [weak self] state in
             self?.render(state)
         }
+        controller.onConnectionChange = { [weak self] _ in
+            self?.renderSkillSection()
+        }
+        renderSkillSection()
         controller.start()
     }
 
@@ -46,6 +57,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         cleanupMenuItem.target = self
         cleanupMenuItem.state = Settings.cleanupEnabled ? .on : .off
         menu.addItem(cleanupMenuItem)
+
+        menu.addItem(.separator())
+        skillStatusItem = NSMenuItem(title: "Skills: off", action: nil, keyEquivalent: "")
+        skillStatusItem.isEnabled = false
+        menu.addItem(skillStatusItem)
+
+        connectItem = NSMenuItem(title: "Connect Codex…", action: #selector(connectCodex), keyEquivalent: "")
+        connectItem.target = self
+        menu.addItem(connectItem)
+
+        checkConnectionItem = NSMenuItem(title: "Check Connection", action: #selector(checkConnection), keyEquivalent: "")
+        checkConnectionItem.target = self
+        menu.addItem(checkConnectionItem)
+
+        chooseExecutableItem = NSMenuItem(title: "Choose Codex Executable…", action: #selector(chooseExecutable), keyEquivalent: "")
+        chooseExecutableItem.target = self
+        menu.addItem(chooseExecutableItem)
+
+        chooseSkillItem = NSMenuItem(title: "Choose Skill…", action: #selector(chooseSkill), keyEquivalent: "")
+        chooseSkillItem.target = self
+        menu.addItem(chooseSkillItem)
+
+        disconnectItem = NSMenuItem(title: "Disconnect", action: #selector(disconnect), keyEquivalent: "")
+        disconnectItem.target = self
+        menu.addItem(disconnectItem)
+        menu.addItem(.separator())
 
         launchAtLoginMenuItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
         launchAtLoginMenuItem.target = self
@@ -83,7 +120,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             text = "Loading models: \(detail)"
         case .idle:
             symbol = "mic"
-            text = "Ready. Hold Fn to dictate."
+            if Settings.skillEnabled, let path = Settings.skillPath {
+                text = "Ready. Hold Fn to dictate, Fn+Shift for \(SkillPrompt.name(ofSkillAt: path))."
+            } else {
+                text = "Ready. Hold Fn to dictate."
+            }
         case .recording:
             symbol = "mic.fill"
             text = "Recording…"
@@ -98,6 +139,106 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.button?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: text)
         statusMenuItem.title = text
         retryMenuItem.isHidden = !failed
+    }
+
+    // MARK: - Skills
+
+    private func renderSkillSection() {
+        let configured = Settings.providerKind != nil
+        let kindName = Settings.providerKind?.displayName ?? "Codex"
+        switch controller.connection {
+        case .notConfigured: skillStatusItem.title = "Skills: off"
+        case .checking: skillStatusItem.title = "\(kindName): checking…"
+        case .connected(let account): skillStatusItem.title = "\(kindName): connected (\(account.summary))"
+        case .failed(let message): skillStatusItem.title = "\(kindName): \(Self.shortStatus(message))"
+        }
+        connectItem.isHidden = configured
+        checkConnectionItem.isHidden = !configured
+        chooseExecutableItem.isHidden = !configured
+        disconnectItem.isHidden = !configured
+        chooseSkillItem.isHidden = !configured
+        if let path = Settings.skillPath {
+            chooseSkillItem.title = "Skill: \(SkillPrompt.name(ofSkillAt: path))…"
+        } else {
+            chooseSkillItem.title = "Choose Skill…"
+        }
+        render(controller.state)
+    }
+
+    private static func shortStatus(_ message: String) -> String {
+        let lower = message.lowercased()
+        if lower.contains("signed out") { return "signed out" }
+        if lower.contains("not found") { return "not found" }
+        if lower.contains("api key") { return "API key login" }
+        return "connection failed"
+    }
+
+    @objc private func connectCodex() {
+        controller.connect(kind: .codex)
+        explainConnectionFailure(after: 20)
+    }
+
+    @objc private func checkConnection() {
+        controller.checkConnection()
+        explainConnectionFailure(after: 20)
+    }
+
+    /// If the check ends in failure, say what to do about it. Polls briefly since
+    /// the check is asynchronous and the menu has already closed.
+    private func explainConnectionFailure(after seconds: TimeInterval) {
+        Task { @MainActor [weak self] in
+            let deadline = Date().addingTimeInterval(seconds)
+            while Date() < deadline {
+                guard let self else { return }
+                switch self.controller.connection {
+                case .checking: try? await Task.sleep(for: .milliseconds(200)); continue
+                case .failed(let message):
+                    NSApp.activate(ignoringOtherApps: true)
+                    let alert = NSAlert()
+                    alert.messageText = "Could not connect"
+                    alert.informativeText = message
+                    alert.addButton(withTitle: "OK")
+                    alert.addButton(withTitle: "Choose Executable…")
+                    if alert.runModal() == .alertSecondButtonReturn { self.chooseExecutable() }
+                    return
+                default: return
+                }
+            }
+        }
+    }
+
+    @objc private func chooseExecutable() {
+        NSApp.activate(ignoringOtherApps: true)
+        let panel = NSOpenPanel()
+        panel.title = "Choose the Codex executable"
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.showsHiddenFiles = true
+        panel.treatsFilePackagesAsDirectories = true
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        Settings.providerExecutableOverride = url.path
+        controller.checkConnection()
+        explainConnectionFailure(after: 20)
+    }
+
+    @objc private func chooseSkill() {
+        NSApp.activate(ignoringOtherApps: true)
+        let panel = NSOpenPanel()
+        panel.title = "Choose a SKILL.md to apply on Fn+Shift"
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.showsHiddenFiles = true
+        panel.allowedContentTypes = [.init(filenameExtension: "md")].compactMap { $0 }
+        let skills = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".agents/skills")
+        if FileManager.default.fileExists(atPath: skills.path) { panel.directoryURL = skills }
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        Settings.skillPath = url.path
+        renderSkillSection()
+    }
+
+    @objc private func disconnect() {
+        controller.disconnect()
+        renderSkillSection()
     }
 
     @objc private func toggleCleanup() {
