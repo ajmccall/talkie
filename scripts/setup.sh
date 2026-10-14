@@ -28,9 +28,50 @@ os_major="$(sw_vers -productVersion | cut -d. -f1)"
 echo "macOS $(sw_vers -productVersion) on $(uname -m)"
 
 step "Checking Xcode"
-if ! xcode-select -p >/dev/null 2>&1 || ! xcodebuild -version >/dev/null 2>&1; then
-  fail "Xcode is not installed or not selected. Install Xcode 26 or later from the App Store, then run: sudo xcode-select -s /Applications/Xcode.app"
+# Full Xcode is required, not just the Command Line Tools: MLX compiles Metal
+# shaders, and the Metal compiler only ships with Xcode's Metal Toolchain.
+xcode_app="$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1 || true)"
+[ -n "$xcode_app" ] || xcode_app="$(mdfind 'kMDItemCFBundleIdentifier == "com.apple.dt.Xcode"' 2>/dev/null | head -1 || true)"
+if [ -z "$xcode_app" ]; then
+  echo "Xcode is not installed."
+  if [ -t 0 ] && command -v brew >/dev/null 2>&1; then
+    # Offer to install via xcodes (https://github.com/XcodesOrg/xcodes). It needs
+    # an Apple ID (prompted for interactively) and downloads a ~3 GB .xip.
+    printf 'Install the latest Xcode now with xcodes? Needs your Apple ID and ~3 GB download. [y/N] '
+    read -r answer
+    if [ "$answer" = "y" ] || [ "$answer" = "Y" ]; then
+      if ! command -v xcodes >/dev/null 2>&1; then
+        step "Installing xcodes and aria2 via Homebrew"
+        brew install xcodesorg/made/xcodes aria2
+      fi
+      step "Installing the latest Xcode (this takes a while)"
+      xcodes install --latest --select --experimental-unxip --empty-trash
+      xcode_app="$(xcodes installed 2>/dev/null | grep -i selected | awk -F'\t' '{print $NF}' || true)"
+      [ -n "$xcode_app" ] || xcode_app="$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1 || true)"
+      [ -n "$xcode_app" ] || fail "xcodes finished but no Xcode was found in /Applications."
+    fi
+  fi
+  [ -n "$xcode_app" ] || fail "Install Xcode 26 or later from the App Store (or https://developer.apple.com/xcode/), open it once to finish installing components, then rerun this script.
+Or install it from the terminal:  brew install xcodesorg/made/xcodes aria2 && xcodes install --latest --select"
 fi
+
+dev_dir="$(xcode-select -p 2>/dev/null || true)"
+case "$dev_dir" in
+  */Xcode*.app/Contents/Developer) ;;
+  *)
+    fail "Xcode is installed at $xcode_app but the active developer directory is '${dev_dir:-unset}' (probably the Command Line Tools). Select Xcode with:
+    sudo xcode-select -s \"$xcode_app\"" ;;
+esac
+
+if ! xcodebuild -version >/dev/null 2>&1; then
+  if xcodebuild -version 2>&1 | grep -qi 'license'; then
+    fail "Xcode licence not accepted. Run: sudo xcodebuild -license accept"
+  fi
+  fail "xcodebuild failed to run. Open $xcode_app once so it can install its components, then rerun. Output was:
+$(xcodebuild -version 2>&1 | head -3)"
+fi
+xcode_major="$(xcodebuild -version | grep -oE 'Xcode [0-9]+' | grep -oE '[0-9]+$' || echo 0)"
+[ "$xcode_major" -ge 26 ] || fail "Xcode 26 or later required (found $(xcodebuild -version | head -1)). Update from the App Store."
 xcodebuild -version | head -1
 swift_major="$(swift --version 2>&1 | grep -oE 'Swift version [0-9]+' | grep -oE '[0-9]+$' || echo 0)"
 [ "$swift_major" -ge 6 ] || fail "Swift 6 or later required."

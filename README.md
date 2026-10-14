@@ -24,8 +24,12 @@ up in about 0.7 s.
 ## Requirements
 
 - Apple silicon Mac, macOS 15 or later
-- Xcode 26 or later, with the Metal Toolchain component (the setup script
-  installs it if missing)
+- Full Xcode 26 or later (the Command Line Tools alone are not enough: MLX
+  needs the Metal compiler, which only ships with Xcode), with the Metal
+  Toolchain component (the setup script installs it if missing). If Xcode is
+  absent, the setup script offers to install it with
+  [xcodes](https://github.com/XcodesOrg/xcodes); you will be asked for your
+  Apple ID and it downloads about 3 GB.
 - About 4 GB of disk for models and build output
 
 ## Setting up on a new machine
