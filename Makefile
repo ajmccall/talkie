@@ -5,7 +5,7 @@
 #   make install    build and copy to /Applications, then launch
 #   make run        build and launch from ./build without installing
 #   make test       unit tests
-#   make selftest   run the transcribe → clean pipeline on an audio file (AUDIO=path)
+#   make selftest   run the transcribe → clean pipeline on an audio file (AUDIO=path, optional VOCAB=list file)
 #   make uninstall  quit and remove /Applications/Talkie.app (models are kept)
 #   make release    tag, build, sign, publish to GitHub Releases and bump the Homebrew cask
 #   make release-dry  build, sign and zip only; prints the sha256
@@ -15,6 +15,7 @@
 APP      := build/Talkie.app
 INSTALL  := /Applications/Talkie.app
 AUDIO    ?= build/selftest.aiff
+VOCAB    ?=
 
 .PHONY: setup build app install run test selftest uninstall clean models-clean release release-dry icon
 
@@ -48,7 +49,7 @@ selftest: build
 		mkdir -p build; \
 		say -v Daniel -o "$(AUDIO)" "um so I think we should uh meet on on Thursday to go over the the budget"; \
 	fi
-	.build/release/Talkie --selftest "$(AUDIO)"
+	.build/release/Talkie --selftest "$(AUDIO)" $(if $(VOCAB),--vocab "$(VOCAB)")
 
 uninstall:
 	@pkill -x Talkie 2>/dev/null || true
@@ -57,6 +58,7 @@ uninstall:
 
 models-clean:
 	rm -rf "$(HOME)/Library/Application Support/FluidAudio/Models/parakeet-tdt-0.6b-v3"
+	rm -rf "$(HOME)/Library/Application Support/FluidAudio/Models/parakeet-ctc-110m-coreml"
 	rm -rf "$(HOME)/.cache/huggingface/hub/models--mlx-community--Qwen3-4B-4bit"
 
 release:

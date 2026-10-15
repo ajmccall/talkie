@@ -2,7 +2,8 @@ import Foundation
 
 /// Deterministic post-processing applied after the LLM (or to the raw transcript
 /// when cleanup is off). Add rules here for things that should always happen
-/// regardless of what the model does, e.g. vocabulary substitutions.
+/// regardless of what the model does. Names and terms belong in the Vocabulary
+/// window instead: that pass listens to the audio rather than editing text.
 enum TextRules {
     typealias Rule = (String) -> String
 

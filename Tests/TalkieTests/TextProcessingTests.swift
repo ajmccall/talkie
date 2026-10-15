@@ -26,6 +26,16 @@ struct CleanerHelperTests {
         #expect(Cleaner.stripThinking("Plain text.") == "Plain text.")
     }
 
+    @Test func instructionsUnchangedWithoutHint() {
+        #expect(Cleaner.instructions(vocabularyHint: nil) == Cleaner.instructions)
+    }
+
+    @Test func instructionsInsertHintBeforeOutputRule() {
+        let lines = Cleaner.instructions(vocabularyHint: "Spell it Alfie.").components(separatedBy: "\n")
+        #expect(lines[lines.count - 2] == "- Spell it Alfie.")
+        #expect(lines.last?.hasPrefix("- Output only") == true)
+    }
+
     @Test func countsWords() {
         #expect(Cleaner.wordCount("  one two\nthree ") == 3)
         #expect(Cleaner.wordCount("") == 0)

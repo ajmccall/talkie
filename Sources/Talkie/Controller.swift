@@ -35,6 +35,7 @@ final class Controller {
 
     private var modelsReady = false
     private var isLoadingModels = false
+    private var isPreparingVocabulary = false
     private var pressStartedAt: Date?
     private var lastLabel: RecordingLabel.Label?
     private var levelTimer: Timer?
@@ -210,6 +211,7 @@ final class Controller {
         do {
             try await transcriber.load(progress: progress)
             try await cleaner.load(progress: progress)
+            await prepareVocabulary(progress: progress)
             modelsReady = true
             state = .idle
             hud.show(.init(kind: .success, text: "Ready. Hold Fn to dictate."), autoHideAfter: 2.5)
@@ -218,6 +220,38 @@ final class Controller {
             state = .failed("Model load failed. Press Fn to retry.")
             hud.show(.init(kind: .failure, text: "Model load failed: \(error.localizedDescription)"), autoHideAfter: 6)
             Sounds.failed()
+        }
+    }
+
+    // MARK: - Vocabulary
+
+    /// The Vocabulary window saved a change: hand the list to Parakeet and fetch
+    /// the extra model if this is the first term. Dictation keeps working either way.
+    func vocabularyChanged() {
+        guard modelsReady else { return }  // loadModels picks the list up itself
+        let progress: @Sendable (String) -> Void = { [weak self] detail in
+            Task { @MainActor in self?.hud.show(.init(kind: .working, text: detail)) }
+        }
+        Task {
+            await prepareVocabulary(progress: progress)
+            if case .idle = state { hud.hide() }
+        }
+    }
+
+    /// Never throws: a failed download is reported, and the next dictation
+    /// simply runs without the vocabulary pass.
+    private func prepareVocabulary(progress: @escaping @Sendable (String) -> Void) async {
+        guard !isPreparingVocabulary else { return }
+        isPreparingVocabulary = true
+        defer { isPreparingVocabulary = false }
+        let terms = Settings.vocabulary
+        await transcriber.setVocabulary(terms)
+        guard !terms.isEmpty else { return }
+        do {
+            try await transcriber.prepareVocabulary(progress: progress)
+        } catch {
+            logger.error("Vocabulary model failed: \(error.localizedDescription)")
+            hud.show(.init(kind: .failure, text: "Vocabulary model failed: \(error.localizedDescription)"), autoHideAfter: 6)
         }
     }
 
@@ -343,7 +377,9 @@ final class Controller {
     private func process(_ recording: AudioRecorder.Recording, processorRequested: Bool, choice: Task<PickerResult, Never>?) async {
         let pickerShown = choice != nil
         do {
-            let raw = try await transcriber.transcribe(recording)
+            let transcription = try await transcriber.transcribe(recording)
+            let raw = transcription.text
+            let hint = Vocabulary.promptHint(Settings.vocabulary)
             logger.info("Raw: \(raw, privacy: .private)")
             guard !raw.isEmpty else {
                 if pickerShown { picker.dismiss() }
@@ -363,7 +399,7 @@ final class Controller {
                 let input = TextRules.apply(raw)
                 let cleanup = Task { () -> (String, CleanupOutcome) in
                     guard Settings.cleanupEnabled else { return (input, .skipped) }
-                    let (cleaned, outcome) = await self.cleanedOrRaw(raw)
+                    let (cleaned, outcome) = await self.cleanedOrRaw(raw, hint: hint)
                     return (TextRules.apply(cleaned), outcome)
                 }
                 var inFlight = Settings.preselectedSkillPath.map { startSkill(input, skillPath: $0) }
@@ -398,7 +434,7 @@ final class Controller {
             } else {
                 if Settings.cleanupEnabled {
                     showProgress("Cleaning up…", pickerShown: false)
-                    (text, outcome) = await cleanedOrRaw(raw)
+                    (text, outcome) = await cleanedOrRaw(raw, hint: hint)
                 }
                 text = TextRules.apply(text)
             }
@@ -412,7 +448,7 @@ final class Controller {
             try await Task.sleep(for: .milliseconds(pickerShown ? Settings.pickerPasteDelayMilliseconds : Settings.pasteDelayMilliseconds))
             let pasted = Paster.pasteFromClipboard()
             Sounds.pasted()
-            let label = skillOutcome.pastedLabel ?? outcome.pastedLabel
+            let label = (skillOutcome.pastedLabel ?? outcome.pastedLabel) + Vocabulary.fixedSuffix(transcription.fixes.map(\.term))
             hud.show(
                 .init(kind: .success, text: pasted ? label : "Copied (grant Accessibility to paste)"),
                 autoHideAfter: skillOutcome.hudSeconds ?? outcome.hudSeconds
@@ -424,11 +460,11 @@ final class Controller {
     }
 
     /// Runs the LLM with a timeout and a sanity check; any problem falls back to the raw transcript.
-    private func cleanedOrRaw(_ raw: String) async -> (text: String, outcome: CleanupOutcome) {
+    private func cleanedOrRaw(_ raw: String, hint: String?) async -> (text: String, outcome: CleanupOutcome) {
         let cleaner = self.cleaner
         do {
             let cleaned = try await withTimeout(seconds: Settings.cleanupTimeoutSeconds) {
-                try await cleaner.clean(raw)
+                try await cleaner.clean(raw, vocabularyHint: hint)
             }
             if Cleaner.looksSane(raw: raw, cleaned: cleaned) {
                 return (cleaned, .cleaned)

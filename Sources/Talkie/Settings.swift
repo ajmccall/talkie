@@ -26,6 +26,12 @@ enum Settings {
         set { defaults.set(newValue.rawValue, forKey: "soundVolume") }
     }
 
+    /// Names and terms Parakeet should prefer, with their known mis-hearings.
+    static var vocabulary: [VocabularyTerm] {
+        get { Vocabulary.decode(defaults.data(forKey: "vocabulary")) }
+        set { defaults.set(Vocabulary.encode(newValue), forKey: "vocabulary") }
+    }
+
     // MARK: - Optional skill post-processing (Fn+Shift)
 
     /// The connected model account, or nil when skills are off.

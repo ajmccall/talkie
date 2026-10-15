@@ -132,6 +132,23 @@ bundled Tink, Pop, Glass and Basso; Off is silent. Choosing a theme plays its
 and Quiet halves the volume. The notes behind each theme live in
 `Sources/Talkie/Sounds.swift` if you want to tune them.
 
+## Vocabulary
+
+**Vocabulary…** in the menu bar holds names and unusual words Parakeet should
+recognise ("Alfie", "Mindera"), each with the spellings it usually produces
+instead ("Alfy"). It is not a find-and-replace: Talkie listens to the
+recording again with a small extra Parakeet CTC model and swaps a word only
+when the sound supports it, so a list of names does not disturb ordinary
+speech. Bare terms catch most mishearings; adding what Talkie writes instead
+catches the rest. The same list is shown to Qwen3 so spelling and
+capitalisation stay consistent, and the paste message says what was fixed
+("Pasted (fixed Alfie)").
+
+The extra model (about 100 MB) downloads the first time a word is added and
+adds roughly a tenth of a second to a short dictation. Everyday words and
+anything under three letters are best left out; the window warns about the
+latter.
+
 ## Behaviour details
 
 - Presses shorter than 0.25 s, or recordings under 0.5 s, are ignored.
@@ -159,10 +176,11 @@ and Quiet halves the volume. The notes behind each theme live in
 | Hotkey | `NSEvent` flags-changed monitor on the Fn key (key code 63) | built in |
 | Capture | `AVAudioEngine` input tap, mono float samples | built in |
 | Transcribe | NVIDIA Parakeet TDT 0.6B v3, Core ML, via [FluidAudio](https://github.com/FluidInference/FluidAudio) (Apache 2.0) | `FluidInference/parakeet-tdt-0.6b-v3-coreml` on Hugging Face |
+| Vocabulary | Parakeet CTC 110M keyword spotting and rescoring, via FluidAudio; only when the list is non-empty | `FluidInference/parakeet-ctc-110m-coreml` on Hugging Face |
 | Clean up | Qwen3 4B, 4-bit, via [mlx-swift-lm](https://github.com/ml-explore/mlx-swift-lm) (MIT) | `mlx-community/Qwen3-4B-4bit` on Hugging Face |
 | Paste | Text goes on the clipboard, then a synthetic ⌘V is sent | built in |
 
-Both models download on first launch and are cached under
+The models download on first use and are cached under
 `~/Library/Application Support/FluidAudio/Models` and
 `~/.cache/huggingface/hub`. Those folders are shared with other tools, so
 uninstalling Talkie leaves them alone; delete them by hand (or `make
@@ -199,7 +217,7 @@ make setup
 | `make install` | Rebuild, replace `/Applications/Talkie.app`, relaunch |
 | `make run` | Rebuild and launch from `./build` without installing |
 | `make test` | Unit tests for the pure helpers |
-| `make selftest AUDIO=file.aiff` | Run transcribe → clean on an audio file and print both outputs. Without `AUDIO`, synthesises a sample with `say` |
+| `make selftest AUDIO=file.aiff` | Run transcribe → clean on an audio file and print both outputs. Without `AUDIO`, synthesises a sample with `say`. Add `VOCAB=list.txt` (one term per line, `Alfie: Alfy, Alfi`) to try the vocabulary pass |
 | `scripts/skill-timing.sh` | Time a Claude Code skill run cold versus pre-warmed, per model. Makes a few tiny API calls on your login |
 | `make uninstall` | Quit and remove the app. Models stay cached; `make models-clean` deletes them |
 | `make release-dry` | Build, sign and zip the app; print the sha256 |
@@ -233,10 +251,15 @@ artifact on every push.
 
 - `Sources/Talkie/Cleaner.swift`: cleanup prompt, sampling parameters, model
   choice (`LLMRegistry.qwen3_4b_4bit`), and the sanity check.
-- `Sources/Talkie/Transcriber.swift`: Parakeet version. `.v2` is English-only
-  and marginally better on English; `.v3` adds 24 more languages.
+- `Sources/Talkie/Transcriber.swift`: Parakeet version (`.v2` is English-only
+  and marginally better on English; `.v3` adds 24 more languages) and the
+  vocabulary pass. FluidAudio's acoustic "spotter rescue" is switched off
+  there because it replaced ordinary phrases with names; the other knobs
+  are described in FluidAudio's `Documentation/ASR/CustomVocabulary.md`.
+- `Sources/Talkie/Vocabulary.swift`: the term list's validation, storage,
+  the Qwen3 hint line and how fixes are written back into the transcript.
 - `Sources/Talkie/TextRules.swift`: deterministic rules applied after the
-  model. Add vocabulary substitutions or formatting rules there.
+  model. Add formatting rules there.
 - `Sources/Talkie/Providers/`: the model-account protocol, the Codex and
   Claude Code implementations (CLI search order, sandbox flags, environment
   scrubbing) and the skill prompt wrapper.

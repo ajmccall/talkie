@@ -24,6 +24,15 @@ actor Cleaner {
         - Output only the corrected text. No preamble, no quotes, no commentary.
         """
 
+    /// The base instructions plus the vocabulary hint, kept above the final
+    /// "output only" rule so that rule stays last.
+    static func instructions(vocabularyHint: String?) -> String {
+        guard let vocabularyHint else { return instructions }
+        var lines = instructions.components(separatedBy: "\n")
+        lines.insert("- \(vocabularyHint)", at: max(0, lines.count - 1))
+        return lines.joined(separator: "\n")
+    }
+
     var isLoaded: Bool { model != nil }
 
     func load(progress: @escaping @Sendable (String) -> Void) async throws {
@@ -40,7 +49,7 @@ actor Cleaner {
         logger.info("Qwen3 ready")
     }
 
-    func clean(_ transcript: String) async throws -> String {
+    func clean(_ transcript: String, vocabularyHint: String? = nil) async throws -> String {
         guard let model else { throw TalkieError.notReady("Qwen3 not loaded") }
         let wordCount = Self.wordCount(transcript)
         let parameters = GenerateParameters(
@@ -50,7 +59,7 @@ actor Cleaner {
         )
         let session = ChatSession(
             model,
-            instructions: Self.instructions,
+            instructions: Self.instructions(vocabularyHint: vocabularyHint),
             generateParameters: parameters,
             additionalContext: ["enable_thinking": false]
         )

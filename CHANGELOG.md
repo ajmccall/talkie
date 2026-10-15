@@ -10,6 +10,8 @@ release notes when `scripts/release.sh` runs; `Unreleased` must be empty then.
 - Claude Code skills default to `haiku` with low effort; a **Model** submenu offers `sonnet` and `opus`. A model chosen earlier is kept.
 
 ### Added
+- **Vocabulary…** window in the menu bar: names and unusual words Parakeet should recognise, each with the spellings it usually produces instead. Matching is acoustic: a small extra Parakeet CTC model (about 100 MB, downloaded when the first word is added) listens to the recording again and a word is only swapped when the sound supports it. The same list is given to Qwen3 so spelling stays consistent, and the paste message says what was fixed.
+- `make selftest` accepts `VOCAB=<list file>` (one term per line, `Alfie: Alfy, Alfi`) to try the vocabulary pass on a recording.
 - `scripts/skill-timing.sh` to measure cold versus pre-warmed skill runs.
 
 ## 0.2.0 - 2026-10-14

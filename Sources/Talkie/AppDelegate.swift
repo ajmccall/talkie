@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private var statusMenuItem: NSMenuItem!
     private var cleanupMenuItem: NSMenuItem!
+    private var vocabularyMenuItem: NSMenuItem!
     private var skillStatusItem: NSMenuItem!
     private var connectItem: NSMenuItem!
     private var connectClaudeItem: NSMenuItem!
@@ -24,6 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var retryMenuItem: NSMenuItem!
     private let controller = Controller()
     private let welcome = WelcomeWindow()
+    private let vocabulary = VocabularyWindow()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildStatusItem()
@@ -34,6 +36,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self?.renderSkillSection()
         }
         welcome.retryModels = { [weak self] in self?.controller.reloadModels() }
+        vocabulary.onChange = { [weak self] in
+            self?.renderVocabularyItem()
+            self?.controller.vocabularyChanged()
+        }
+        renderVocabularyItem()
         renderSkillSection()
         // First launch: explain before the system permission prompts land on top.
         if !Settings.welcomeShown {
@@ -72,6 +79,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         cleanupMenuItem.target = self
         cleanupMenuItem.state = Settings.cleanupEnabled ? .on : .off
         menu.addItem(cleanupMenuItem)
+
+        vocabularyMenuItem = NSMenuItem(title: "Vocabulary…", action: #selector(showVocabulary), keyEquivalent: "")
+        vocabularyMenuItem.target = self
+        menu.addItem(vocabularyMenuItem)
 
         let soundsItem = NSMenuItem(title: "Sounds", action: nil, keyEquivalent: "")
         soundsItem.submenu = buildSoundsMenu()
@@ -439,6 +450,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             try? await Task.sleep(for: .milliseconds(900))
             Sounds.preview(.pasted, theme: theme)
         }
+    }
+
+    private func renderVocabularyItem() {
+        let count = Settings.vocabulary.count
+        vocabularyMenuItem.title = count == 0 ? "Vocabulary…" : "Vocabulary… (\(count) \(count == 1 ? "word" : "words"))"
+    }
+
+    @objc private func showVocabulary() {
+        vocabulary.show()
     }
 
     @objc private func toggleCleanup() {
