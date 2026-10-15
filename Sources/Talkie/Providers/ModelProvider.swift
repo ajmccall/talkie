@@ -27,7 +27,16 @@ enum ProviderKind: String, CaseIterable, Sendable {
     var defaultModel: String {
         switch self {
         case .codex: return "gpt-6-astra"
-        case .claude: return "sonnet"
+        case .claude: return "haiku"
+        }
+    }
+
+    /// Models offered in the menu. Rewording is a light task, so the fastest
+    /// model is the default and the stronger ones are one click away.
+    var modelChoices: [String] {
+        switch self {
+        case .codex: return [defaultModel]
+        case .claude: return ["haiku", "sonnet", "opus"]
         }
     }
 
@@ -52,6 +61,22 @@ protocol ModelProvider: Sendable {
     func checkConnection(executable: URL) async throws -> ProviderAccount
     /// Applies `skill` to `text` and returns the replacement text.
     func transform(_ text: String, skill: String, model: String, executable: URL) async throws -> String
+    /// Starts the CLI ahead of time so its boot cost is paid before the text
+    /// exists. Returns nil when the provider has nothing to pre-warm.
+    func prepare(model: String, executable: URL) throws -> (any PreparedTransform)?
+}
+
+extension ModelProvider {
+    func prepare(model: String, executable: URL) throws -> (any PreparedTransform)? { nil }
+}
+
+/// A CLI already running and waiting for its prompt. Exactly one of
+/// `transform` or `discard` should be called.
+protocol PreparedTransform: AnyObject, Sendable {
+    var startedAt: Date { get }
+    var isRunning: Bool { get }
+    func transform(_ text: String, skill: String) async throws -> String
+    func discard()
 }
 
 enum ProviderError: LocalizedError, Equatable {

@@ -117,6 +117,33 @@ FluidAudio and mlx-swift-lm are now pinned with `exact:` and
 - The connection check runs at launch when configured and again before a
   dictation if the last check failed; a signed-out result is surfaced in the
   HUD at paste time rather than during recording.
+- Latency work (0.3.0). The skill path used to be serial: Parakeet, Qwen3,
+  wait for Enter, boot the CLI, API call. Now: the first time Shift is seen
+  during a hold, `ClaudeProvider.prepare` launches `claude -p
+  --input-format stream-json --output-format stream-json` with stdin held
+  open (`Subprocess.spawn`), so node start-up, config and login overlap the
+  recording. On release, once Parakeet has the text, the highlighted skill
+  starts straight away with the raw transcript (`Controller.startSkill`) and
+  Qwen3 runs concurrently to produce the fallback text. Enter on the
+  highlighted entry awaits the run already in flight; another entry cancels
+  it (task cancellation terminates the child) and launches on demand.
+  Escape, a short press, "no speech", disconnect and quit all discard the
+  pre-warmed process; one older than `Settings.warmTransformMaximumAgeSeconds`
+  (60 s) is discarded rather than used. Codex has no pre-warm: it is a Rust
+  binary whose boot is negligible, so it keeps the one-shot path.
+  Two things found while measuring: a stream-json session does not exit when
+  stdin closes, so `Subprocess.Handle.finish(input:completeWhen:)` returns the
+  moment a `"type":"result"` line arrives and then terminates the child; and
+  `FileHandle.read(upToCount:)` waits for the full count or EOF, so the pipe
+  drain uses `availableData` to see lines as they are written.
+  `scripts/skill-timing.sh`, three runs each, M-series Mac, 2026-10-15:
+  cold haiku 2.7 s → warm 1.0 s; cold sonnet 3.5 s → warm 1.4 s. The warm
+  figure is almost entirely API time (`duration_api_ms`), i.e. the CLI's
+  1.3–2.2 s of boot and set-up is now hidden behind the recording.
+- `claude --bare` would skip hooks, plugin sync and keychain reads, but it
+  also disables OAuth, so it cannot be used with the subscription login.
+  `--effort low` is passed instead, matching Codex's
+  `model_reasoning_effort=low`.
 - The skill picker is a non-activating panel that overrides `canBecomeKey`, so
   it receives arrows, Return and Escape without activating Talkie; the app you
   dictated into stays frontmost. Losing key status (a click elsewhere) counts

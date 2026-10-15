@@ -14,6 +14,8 @@ final class FnKeyMonitor {
     static let fnKeyCode: UInt16 = 63
 
     var onPress: (() -> Void)?
+    /// Called once per hold, the first time Shift is seen while Fn is down.
+    var onShiftSeen: (() -> Void)?
     /// Called on Fn release with whether Shift was held at any point during the hold.
     var onRelease: ((Bool) -> Void)?
 
@@ -49,7 +51,10 @@ final class FnKeyMonitor {
 
     private func handle(_ event: NSEvent) {
         let shift = event.modifierFlags.contains(.shift)
-        if isDown, shift { shiftSeen = true }
+        if isDown, shift, !shiftSeen {
+            shiftSeen = true
+            onShiftSeen?()
+        }
         guard event.keyCode == Self.fnKeyCode else { return }
         let down = event.modifierFlags.contains(.function)
         guard down != isDown else { return }
@@ -57,6 +62,7 @@ final class FnKeyMonitor {
         if down {
             shiftSeen = shift
             onPress?()
+            if shift { onShiftSeen?() }
         } else {
             let requested = shiftSeen
             shiftSeen = false

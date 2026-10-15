@@ -93,6 +93,18 @@ skill, but any SKILL.md whose job is to rewrite text will do.
    The picker takes keyboard focus without activating Talkie, so the app you
    were in stays frontmost and receives the paste. Fn does nothing while the
    picker is open.
+4. **Model ▸** picks the model the skill runs on. Claude Code defaults to
+   `haiku`, the fastest; `sonnet` and `opus` are there when the rewrite needs
+   more care.
+
+Talkie does not wait for you: the highlighted skill starts on the transcript
+the instant transcription finishes, so Enter usually confirms a run already in
+flight; picking a different entry cancels it and starts that one. Holding
+Shift also launches the CLI while you are still speaking, so its start-up
+overlaps the recording rather than following it. Qwen3 cleanup runs
+alongside the skill and is only pasted if the skill fails. Measured with
+`scripts/skill-timing.sh`, a Claude Code skill run drops from about 2.7 s to
+1.0 s on `haiku` and 3.5 s to 1.4 s on `sonnet`; what is left is the API call.
 
 How a skill is run: Talkie wraps the skill and the transcript in a prompt that
 treats the transcript as data, forbids questions (the model assumes instead),
@@ -104,8 +116,8 @@ connected account or chosen skill pastes the cleaned transcript and says so.
 
 **Claude Code** works the same way: **Connect Claude Code…** finds the
 `claude` CLI (`~/.local/bin`, Homebrew, or nvm) and checks `claude auth status`.
-Skills run with `claude -p`, no tools, no hooks, no CLAUDE.md or memory, and a
-JSON schema for the reply; the default model is `sonnet`. If your login lives
+Skills run with `claude -p`, no tools, no hooks, no CLAUDE.md or memory, low
+effort, and a JSON schema for the reply; the default model is `haiku`. If your login lives
 in a profile folder rather than `~/.claude` (you set `CLAUDE_CONFIG_DIR` in the
 shell), point Talkie at it with **Choose Claude Config Folder…**. One account
 is connected at a time; Disconnect and connect the other to switch.
@@ -188,6 +200,7 @@ make setup
 | `make run` | Rebuild and launch from `./build` without installing |
 | `make test` | Unit tests for the pure helpers |
 | `make selftest AUDIO=file.aiff` | Run transcribe → clean on an audio file and print both outputs. Without `AUDIO`, synthesises a sample with `say` |
+| `scripts/skill-timing.sh` | Time a Claude Code skill run cold versus pre-warmed, per model. Makes a few tiny API calls on your login |
 | `make uninstall` | Quit and remove the app. Models stay cached; `make models-clean` deletes them |
 | `make release-dry` | Build, sign and zip the app; print the sha256 |
 | `make release` | Tag, build, publish to GitHub Releases, bump the Homebrew cask |

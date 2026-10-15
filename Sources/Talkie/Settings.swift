@@ -112,6 +112,10 @@ enum Settings {
     /// transcript is pasted. Codex takes 5–20 s on a short message.
     static let skillTimeoutSeconds: TimeInterval = 90
 
+    /// A CLI pre-launched on Fn+Shift is used only if it is younger than this;
+    /// an older one (a very long hold) is killed and a fresh one launched.
+    static let warmTransformMaximumAgeSeconds: TimeInterval = 60
+
     /// Delay between putting text on the clipboard and sending ⌘V. Some apps
     /// (Electron, Java) need a moment to notice the new pasteboard contents.
     static let pasteDelayMilliseconds = 80

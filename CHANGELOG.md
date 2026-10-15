@@ -5,6 +5,13 @@ release notes when `scripts/release.sh` runs; `Unreleased` must be empty then.
 
 ## Unreleased
 
+### Changed
+- Fn+Shift is quicker: the highlighted skill starts the moment transcription finishes instead of after Enter, Qwen3 cleanup runs alongside it as the fallback rather than ahead of it, and the Claude Code CLI is launched while you are still speaking so its start-up is hidden.
+- Claude Code skills default to `haiku` with low effort; a **Model** submenu offers `sonnet` and `opus`. A model chosen earlier is kept.
+
+### Added
+- `scripts/skill-timing.sh` to measure cold versus pre-warmed skill runs.
+
 ## 0.2.0 - 2026-10-14
 
 ### Added

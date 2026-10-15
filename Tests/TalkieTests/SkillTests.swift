@@ -267,3 +267,50 @@ struct CodexLiveTests {
         #expect(!result.lowercased().contains("um "))
     }
 }
+
+@Suite("Subprocess, two-phase")
+struct PreparedSubprocessTests {
+    @Test func spawnThenFinishFeedsStdinLater() async throws {
+        let handle = try Subprocess.spawn(executable: URL(fileURLWithPath: "/bin/cat"))
+        #expect(handle.isRunning)
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(handle.isRunning)  // still waiting on stdin
+        let output = try await handle.finish(input: Data("later\n".utf8))
+        #expect(output.status == 0 && output.stdoutText == "later\n")
+        #expect(!handle.isRunning)
+    }
+
+    @Test func discardKillsAnUnusedChild() async throws {
+        let handle = try Subprocess.spawn(executable: URL(fileURLWithPath: "/bin/cat"))
+        handle.discard()
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(!handle.isRunning)
+        await #expect(throws: CancellationError.self) { try await handle.finish(input: Data()) }
+    }
+
+    @Test func cancellingFinishTerminatesTheChild() async throws {
+        let handle = try Subprocess.spawn(executable: URL(fileURLWithPath: "/bin/sleep"), arguments: ["30"])
+        let task = Task { try await handle.finish(input: Data()) }
+        try await Task.sleep(for: .milliseconds(100))
+        task.cancel()
+        await #expect(throws: CancellationError.self) { try await task.value }
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(!handle.isRunning)
+    }
+}
+
+extension PreparedSubprocessTests {
+    @Test func completeWhenEndsTheWaitBeforeExit() async throws {
+        // `cat` would otherwise block forever on... nothing: stdin is closed, but a
+        // child that ignores EOF models the stream-json session. Use a shell loop.
+        let handle = try Subprocess.spawn(executable: URL(fileURLWithPath: "/bin/sh"),
+                                          arguments: ["-c", "cat; echo '{\"type\":\"result\"}'; sleep 30"])
+        let started = Date()
+        let output = try await handle.finish(input: Data("ignored\n".utf8)) { $0.contains("\"type\":\"result\"") }
+        #expect(Date().timeIntervalSince(started) < 5)
+        #expect(output.status == 0)
+        #expect(output.stdoutText.contains("\"type\":\"result\""))
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(!handle.isRunning)
+    }
+}

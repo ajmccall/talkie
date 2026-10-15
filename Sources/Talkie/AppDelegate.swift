@@ -18,6 +18,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var disconnectItem: NSMenuItem!
     private var skillsItem: NSMenuItem!
     private var skillsMenu: NSMenu!
+    private var modelItem: NSMenuItem!
+    private var modelMenu: NSMenu!
     private var launchAtLoginMenuItem: NSMenuItem!
     private var retryMenuItem: NSMenuItem!
     private let controller = Controller()
@@ -106,6 +108,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         skillsItem.submenu = skillsMenu
         menu.addItem(skillsItem)
 
+        modelMenu = NSMenu(title: "Model")
+        modelMenu.delegate = self
+        modelItem = NSMenuItem(title: "Model", action: nil, keyEquivalent: "")
+        modelItem.submenu = modelMenu
+        menu.addItem(modelItem)
+
         disconnectItem = NSMenuItem(title: "Disconnect", action: #selector(disconnect), keyEquivalent: "")
         disconnectItem.target = self
         menu.addItem(disconnectItem)
@@ -189,6 +197,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         skillsItem.isHidden = !configured
         let count = Settings.skillPaths.count
         skillsItem.title = count == 0 ? "Skills (none added)" : "Skills (\(count))"
+        modelItem.isHidden = !configured
+        modelItem.title = "Model: \(Settings.providerModel)"
         render(controller.state)
     }
 
@@ -277,6 +287,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// The Skills submenu is rebuilt each time it opens: one entry per skill
     /// (tick = highlighted first in the picker), then Add Skill… and a Remove submenu.
     func menuWillOpen(_ menu: NSMenu) {
+        if menu === modelMenu {
+            rebuildModelMenu()
+            return
+        }
         guard menu === skillsMenu else { return }
         menu.removeAllItems()
         let paths = Settings.skillPaths
@@ -316,6 +330,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func preselectSkill(_ sender: NSMenuItem) {
         Settings.lastUsedSkillPath = sender.representedObject as? String
+    }
+
+    /// The model the skill runs on, as a radio group. The provider's choices
+    /// plus whatever is currently stored (an older default, or a hand-set name).
+    private func rebuildModelMenu() {
+        modelMenu.removeAllItems()
+        guard let kind = Settings.providerKind else { return }
+        let current = Settings.providerModel
+        var choices = kind.modelChoices
+        if !current.isEmpty, !choices.contains(current) { choices.append(current) }
+        for model in choices {
+            let item = NSMenuItem(title: model, action: #selector(selectModel(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = model
+            item.state = model == current ? .on : .off
+            if model == kind.defaultModel { item.toolTip = "Default: fastest" }
+            modelMenu.addItem(item)
+        }
+    }
+
+    @objc private func selectModel(_ sender: NSMenuItem) {
+        guard let model = sender.representedObject as? String else { return }
+        Settings.providerModel = model
+        renderSkillSection()
     }
 
     @objc private func removeSkill(_ sender: NSMenuItem) {

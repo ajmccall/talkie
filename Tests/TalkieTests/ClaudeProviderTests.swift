@@ -62,7 +62,50 @@ struct ClaudeProviderTests {
         #expect(args.contains("--no-session-persistence") && args.contains("--strict-mcp-config"))
         #expect(args.contains("--disable-slash-commands") && !args.contains("--bare"))
         #expect(args.contains("--model") && args.contains("sonnet"))
+        #expect(args.contains("--effort") && args.contains("low"))
+        #expect(args.contains("json") && !args.contains("stream-json"))
         #expect(!ClaudeProvider.arguments(model: "").contains("--model"))
+    }
+
+    @Test func streamingArgumentsUseStreamJsonBothWays() {
+        let args = ClaudeProvider.arguments(model: "haiku", streaming: true)
+        for (index, item) in args.enumerated() where item == "--input-format" { #expect(args[index + 1] == "stream-json") }
+        for (index, item) in args.enumerated() where item == "--output-format" { #expect(args[index + 1] == "stream-json") }
+        #expect(args.contains("--verbose") && args.contains("--json-schema") && args.contains("--permission-prompts"))
+        #expect(!args.contains("json") || args.filter { $0 == "stream-json" }.count == 2)
+    }
+
+    @Test func streamMessageIsOneJsonLine() throws {
+        let data = try ClaudeProvider.streamMessage(prompt: "hello\nworld")
+        let text = String(decoding: data, as: UTF8.self)
+        #expect(text.hasSuffix("\n") && text.dropLast().filter { $0 == "\n" }.isEmpty)
+        let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        #expect(object?["type"] as? String == "user")
+        let message = object?["message"] as? [String: Any]
+        #expect(message?["role"] as? String == "user" && message?["content"] as? String == "hello\nworld")
+    }
+
+    @Test func decodesStreamJsonResultEvent() throws {
+        let stream = """
+        {"type":"system","subtype":"init","model":"claude-haiku"}
+        {"type":"assistant","message":{"content":[{"type":"text","text":"{\\"text\\":\\"Hi\\"}"}]}}
+        {"type":"result","is_error":false,"result":"{\\"text\\":\\"Hi\\"}","structured_output":{"text":"Hi there"}}
+
+        """
+        #expect(try ClaudeProvider.decodeStream(Data(stream.utf8), status: 0, stderr: "") == "Hi there")
+        let failed = #"{"type":"result","is_error":true,"result":"Claude AI usage limit reached"}"#
+        #expect(throws: ProviderError.service("Claude allowance or rate limit reached")) {
+            try ClaudeProvider.decodeStream(Data(failed.utf8), status: 1, stderr: "")
+        }
+        let noResult = #"{"type":"system","subtype":"init"}"#
+        #expect(throws: ProviderError.invalidResponse) { try ClaudeProvider.decodeStream(Data(noResult.utf8), status: 0, stderr: "") }
+        #expect(throws: ProviderError.service("Claude failed")) { try ClaudeProvider.decodeStream(Data(), status: 1, stderr: "boom") }
+    }
+
+    @Test func defaultModelIsFastestAndChoicesIncludeIt() {
+        #expect(ProviderKind.claude.defaultModel == "haiku")
+        #expect(ProviderKind.claude.modelChoices.contains(ProviderKind.claude.defaultModel))
+        #expect(ProviderKind.codex.modelChoices == [ProviderKind.codex.defaultModel])
     }
 
     @Test func decodesStructuredOutputAndErrors() throws {

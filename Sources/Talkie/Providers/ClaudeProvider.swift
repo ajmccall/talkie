@@ -94,22 +94,35 @@ struct ClaudeProvider: ModelProvider {
     static let systemPrompt = "You are a text transformation engine. Follow the instructions in the message, "
         + "use no tools, and reply with only the JSON object the response schema requires."
 
-    static func arguments(model: String) -> [String] {
-        var arguments = ["-p", "--output-format", "json", "--json-schema", SkillResponse.schema,
-                         "--system-prompt", systemPrompt,
-                         "--tools", "", "--disallowedTools", "mcp__*", "--strict-mcp-config",
-                         "--disable-slash-commands", "--no-session-persistence", "--permission-prompts", "none"]
+    /// `streaming` swaps the one-shot text prompt for stream-json on both ends,
+    /// which lets the process be launched before the prompt exists.
+    static func arguments(model: String, streaming: Bool = false) -> [String] {
+        var arguments = ["-p"]
+        if streaming {
+            arguments += ["--input-format", "stream-json", "--output-format", "stream-json", "--verbose"]
+        } else {
+            arguments += ["--output-format", "json"]
+        }
+        arguments += ["--json-schema", SkillResponse.schema,
+                      "--system-prompt", systemPrompt, "--effort", "low",
+                      "--tools", "", "--disallowedTools", "mcp__*", "--strict-mcp-config",
+                      "--disable-slash-commands", "--no-session-persistence", "--permission-prompts", "none"]
         let model = model.trimmingCharacters(in: .whitespacesAndNewlines)
         if !model.isEmpty { arguments += ["--model", model] }
         return arguments
     }
 
-    func transform(_ text: String, skill: String, model: String, executable: URL) async throws -> String {
-        let prompt = try SkillPrompt.make(skill: skill, transcript: text)
+    private static func makeScratchDirectory() throws -> URL {
         let fm = FileManager.default
         let directory = fm.temporaryDirectory.appendingPathComponent("Talkie-\(UUID().uuidString)", isDirectory: true)
         try fm.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        defer { try? fm.removeItem(at: directory) }
+        return directory
+    }
+
+    func transform(_ text: String, skill: String, model: String, executable: URL) async throws -> String {
+        let prompt = try SkillPrompt.make(skill: skill, transcript: text)
+        let directory = try Self.makeScratchDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
 
         let started = Date()
         let result = try await Subprocess.run(
@@ -124,10 +137,89 @@ struct ClaudeProvider: ModelProvider {
         return try Self.decode(result.stdout, status: result.status, stderr: result.stderrText)
     }
 
+    /// Launches `claude -p` in stream-json mode with stdin held open. Node
+    /// start-up, config and login happen now; the prompt is sent by `transform`.
+    func prepare(model: String, executable: URL) throws -> (any PreparedTransform)? {
+        let directory = try Self.makeScratchDirectory()
+        do {
+            let handle = try Subprocess.spawn(
+                executable: executable,
+                arguments: Self.arguments(model: model, streaming: true),
+                environment: environment(for: executable),
+                directory: directory
+            )
+            logger.info("claude -p pre-warmed")
+            return WarmTransform(handle: handle, directory: directory, logger: logger)
+        } catch {
+            try? FileManager.default.removeItem(at: directory)
+            throw error
+        }
+    }
+
+    /// One user message on stdin, as the stream-json input format expects.
+    static func streamMessage(prompt: String) throws -> Data {
+        let message: [String: Any] = ["type": "user", "message": ["role": "user", "content": prompt]]
+        var data = try JSONSerialization.data(withJSONObject: message, options: [.sortedKeys])
+        data.append(0x0A)
+        return data
+    }
+
+    private final class WarmTransform: PreparedTransform, @unchecked Sendable {
+        private let handle: Subprocess.Handle
+        private let directory: URL
+        private let logger: Logger
+
+        init(handle: Subprocess.Handle, directory: URL, logger: Logger) {
+            self.handle = handle
+            self.directory = directory
+            self.logger = logger
+        }
+
+        var startedAt: Date { handle.startedAt }
+        var isRunning: Bool { handle.isRunning }
+
+        func transform(_ text: String, skill: String) async throws -> String {
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let prompt = try SkillPrompt.make(skill: skill, transcript: text)
+            let started = Date()
+            // A stream-json session stays alive after stdin closes, so stop
+            // waiting the moment the result event has been written.
+            let result = try await handle.finish(input: try ClaudeProvider.streamMessage(prompt: prompt),
+                                                 completeWhen: ClaudeProvider.isResultLine)
+            try Task.checkCancellation()
+            logger.info("pre-warmed claude -p answered in \(Date().timeIntervalSince(started), format: .fixed(precision: 2))s (alive \(Date().timeIntervalSince(self.startedAt), format: .fixed(precision: 1))s) with status \(result.status)")
+            return try ClaudeProvider.decodeStream(result.stdout, status: result.status, stderr: result.stderrText)
+        }
+
+        func discard() {
+            handle.discard()
+            try? FileManager.default.removeItem(at: directory)
+        }
+    }
+
     /// The `json` output format is one object: `structured_output` holds the
     /// schema-shaped reply, `result` the raw text, `is_error` a failure message.
     static func decode(_ data: Data, status: Int32, stderr: String) throws -> String {
         let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        return try decode(result: object, status: status, stderr: stderr)
+    }
+
+    /// Cheap test for the final stream-json event, run on every stdout line.
+    static func isResultLine(_ line: String) -> Bool {
+        line.hasPrefix("{") && line.contains(#""type":"result""#)
+    }
+
+    /// The `stream-json` output format is one JSON object per line; the last
+    /// one with `"type":"result"` has the same shape as the `json` format.
+    static func decodeStream(_ data: Data, status: Int32, stderr: String) throws -> String {
+        let text = String(decoding: data, as: UTF8.self)
+        let result = text.split(separator: "\n").reversed().lazy
+            .compactMap { (try? JSONSerialization.jsonObject(with: Data($0.utf8))) as? [String: Any] }
+            .first { $0["type"] as? String == "result" }
+        return try decode(result: result, status: status, stderr: stderr)
+    }
+
+    private static func decode(result object: [String: Any]?, status: Int32, stderr: String) throws -> String {
         if let object, object["is_error"] as? Bool == true || status != 0 {
             throw diagnose((object["result"] as? String ?? "") + " " + stderr)
         }

@@ -43,6 +43,8 @@ final class Controller {
     private var provider: (any ModelProvider)?
     private var providerExecutable: URL?
     private var connectionTask: Task<Void, Never>?
+    /// A CLI launched when Shift was first seen during a hold, waiting for its prompt.
+    private var warmTransform: (any PreparedTransform)?
 
     private(set) var state: State = .loadingModels("starting") {
         didSet { onStateChange?(state) }
@@ -54,6 +56,7 @@ final class Controller {
 
     func start() {
         fnKey.onPress = { [weak self] in self?.fnPressed() }
+        fnKey.onShiftSeen = { [weak self] in self?.prewarmProvider() }
         fnKey.onRelease = { [weak self] shift in self?.fnReleased(processorRequested: shift) }
         fnKey.start()
 
@@ -68,6 +71,7 @@ final class Controller {
         maxDurationTimer?.invalidate()
         accessibilityTimer?.invalidate()
         if recorder.isRecording { _ = recorder.stop() }
+        discardWarmTransform()
     }
 
     /// Re-attempt model download/load, e.g. after a network failure.
@@ -84,10 +88,44 @@ final class Controller {
 
     func disconnect() {
         connectionTask?.cancel()
+        discardWarmTransform()
         Settings.providerKind = nil
         provider = nil
         providerExecutable = nil
         connection = .notConfigured
+    }
+
+    // MARK: - Pre-warmed CLI
+
+    /// Shift seen while recording: a skill is likely, so start the CLI now and
+    /// let its boot overlap the rest of the dictation. Nothing is sent yet.
+    private func prewarmProvider() {
+        guard case .recording = state, Settings.skillEnabled,
+              let provider, let executable = providerExecutable else { return }
+        discardWarmTransform()
+        do {
+            warmTransform = try provider.prepare(model: Settings.providerModel, executable: executable)
+        } catch {
+            logger.notice("Pre-warm failed, will launch on demand: \(error.localizedDescription)")
+        }
+    }
+
+    /// Hands over the pre-warmed CLI if it is still alive and recent, else nil.
+    private func takeWarmTransform() -> (any PreparedTransform)? {
+        guard let warm = warmTransform else { return nil }
+        warmTransform = nil
+        let age = Date().timeIntervalSince(warm.startedAt)
+        guard warm.isRunning, age < Settings.warmTransformMaximumAgeSeconds else {
+            logger.notice("Pre-warmed CLI \(warm.isRunning ? "too old" : "exited") after \(age, format: .fixed(precision: 1))s; launching on demand")
+            warm.discard()
+            return nil
+        }
+        return warm
+    }
+
+    private func discardWarmTransform() {
+        warmTransform?.discard()
+        warmTransform = nil
     }
 
     /// Locates the CLI and asks it for its login state. Safe to call repeatedly.
@@ -263,6 +301,7 @@ final class Controller {
 
         guard held >= Settings.minimumHoldSeconds, recording.duration >= Settings.minimumAudioSeconds else {
             logger.info("Ignoring short press (\(held, format: .fixed(precision: 2))s, \(recording.duration, format: .fixed(precision: 2))s audio)")
+            discardWarmTransform()
             state = .idle
             hud.hide()
             return
@@ -283,6 +322,7 @@ final class Controller {
             choice = Task { await picker.present(skills: skills, preselected: preselected) }
             picker.setStatus(message, ready: false)
         } else {
+            discardWarmTransform()
             hud.show(.init(kind: .working, text: message))
         }
         Task { await process(recording, processorRequested: processorRequested, choice: choice) }
@@ -307,6 +347,7 @@ final class Controller {
             logger.info("Raw: \(raw, privacy: .private)")
             guard !raw.isEmpty else {
                 if pickerShown { picker.dismiss() }
+                discardWarmTransform()
                 hud.show(.init(kind: .failure, text: "No speech detected"), autoHideAfter: 2)
                 state = .idle
                 return
@@ -314,14 +355,18 @@ final class Controller {
 
             var text = raw
             var outcome = CleanupOutcome.skipped
-            if Settings.cleanupEnabled {
-                showProgress("Cleaning up…", pickerShown: pickerShown)
-                (text, outcome) = await cleanedOrRaw(raw)
-            }
-            text = TextRules.apply(text)
-
             var skillOutcome = SkillOutcome.notRequested
             if let choice {
+                // Skill path. Qwen3 only supplies the fallback text here, so it
+                // runs alongside the skill rather than ahead of it, and the skill
+                // starts on the highlighted entry before Enter is pressed.
+                let input = TextRules.apply(raw)
+                let cleanup = Task { () -> (String, CleanupOutcome) in
+                    guard Settings.cleanupEnabled else { return (input, .skipped) }
+                    let (cleaned, outcome) = await self.cleanedOrRaw(raw)
+                    return (TextRules.apply(cleaned), outcome)
+                }
+                var inFlight = Settings.preselectedSkillPath.map { startSkill(input, skillPath: $0) }
                 picker.setStatus("Ready", ready: true)
                 state = .choosing
                 let result = await choice.value
@@ -329,12 +374,35 @@ final class Controller {
                 switch result {
                 case .asIs:
                     logger.info("Skill picker dismissed; pasting as-is")
+                    inFlight?.task.cancel()
+                    discardWarmTransform()
                     state = .processing("Pasting…")
+                    (text, outcome) = await cleanup.value
                 case .skill(let skill):
                     Settings.lastUsedSkillPath = skill.path
-                    (text, skillOutcome) = await skillAppliedOrCleaned(text, skillPath: skill.path)
+                    if inFlight?.path != skill.path {
+                        inFlight?.task.cancel()
+                        inFlight = startSkill(input, skillPath: skill.path)
+                    }
+                    let name = SkillPrompt.name(ofSkillAt: skill.path)
+                    state = .processing("Applying \(name)…")
+                    hud.show(.init(kind: .working, text: "Applying \(name)…"))
+                    let applied: String?
+                    (applied, skillOutcome) = await inFlight!.task.value
+                    if let applied {
+                        text = applied
+                    } else {
+                        (text, outcome) = await cleanup.value
+                    }
                 }
-            } else if processorRequested {
+            } else {
+                if Settings.cleanupEnabled {
+                    showProgress("Cleaning up…", pickerShown: false)
+                    (text, outcome) = await cleanedOrRaw(raw)
+                }
+                text = TextRules.apply(text)
+            }
+            if processorRequested, choice == nil {
                 skillOutcome = Settings.providerKind == nil || provider == nil ? .notConnected : .noSkill
                 logger.notice("Skill requested but unavailable: \(skillOutcome.pastedLabel ?? "")")
             }
@@ -376,16 +444,27 @@ final class Controller {
         }
     }
 
-    /// Sends the text through the chosen skill via the connected account, with a
-    /// timeout; any problem falls back to the cleaned text.
-    private func skillAppliedOrCleaned(_ text: String, skillPath: String) async -> (text: String, outcome: SkillOutcome) {
+    /// A skill run in progress. Cancelling the task terminates the CLI.
+    private typealias SkillRun = (path: String, task: Task<(String?, SkillOutcome), Never>)
+
+    /// Starts a skill on `text` straight away. The pre-warmed CLI, if any, is
+    /// handed to the first run; a later run (the user changed their mind)
+    /// launches on demand.
+    private func startSkill(_ text: String, skillPath: String) -> SkillRun {
+        let warm = takeWarmTransform()
+        let task = Task { await self.applySkill(text, skillPath: skillPath, warm: warm) }
+        return (skillPath, task)
+    }
+
+    /// Sends the text through the skill via the connected account, with a
+    /// timeout. Returns the new text, or nil with the reason it was not applied.
+    private func applySkill(_ text: String, skillPath: String, warm: (any PreparedTransform)?) async -> (String?, SkillOutcome) {
         guard let provider, Settings.providerKind != nil else {
+            warm?.discard()
             logger.notice("Skill requested but no model account connected")
-            return (text, .notConnected)
+            return (nil, .notConnected)
         }
         let name = SkillPrompt.name(ofSkillAt: skillPath)
-        state = .processing("Applying \(name)…")
-        hud.show(.init(kind: .working, text: "Applying \(name)…"))
 
         if providerExecutable == nil {
             connectionTask?.cancel()
@@ -393,8 +472,9 @@ final class Controller {
             _ = await performConnectionCheck(provider)
         }
         guard let executable = providerExecutable else {
+            warm?.discard()
             let reason = (connection == .checking) ? "not connected" : shortFailure
-            return (text, .failed(name, reason))
+            return (nil, .failed(name, reason))
         }
 
         let started = Date()
@@ -402,20 +482,25 @@ final class Controller {
             let skill = try SkillPrompt.load(at: skillPath)
             let model = Settings.providerModel
             let applied = try await withTimeout(seconds: Settings.skillTimeoutSeconds) {
-                try await provider.transform(text, skill: skill, model: model, executable: executable)
+                if let warm { return try await warm.transform(text, skill: skill) }
+                return try await provider.transform(text, skill: skill, model: model, executable: executable)
             }
-            logger.info("Skill \(name) applied in \(Date().timeIntervalSince(started), format: .fixed(precision: 2))s")
+            logger.info("Skill \(name) applied in \(Date().timeIntervalSince(started), format: .fixed(precision: 2))s\(warm == nil ? "" : " (pre-warmed)")")
             return (TextRules.apply(applied), .applied(name))
+        } catch is CancellationError {
+            logger.info("Skill \(name) cancelled")
+            return (nil, .failed(name, "cancelled"))
         } catch TalkieError.timeout {
             logger.error("Skill \(name) timed out after \(Int(Settings.skillTimeoutSeconds))s, pasting cleaned text")
-            return (text, .timedOut(name))
+            return (nil, .timedOut(name))
         } catch let error as ProviderError {
             if case .signedOut = error { connection = .failed(error.errorDescription ?? "signed out") }
             logger.error("Skill \(name) failed, pasting cleaned text: \(error.localizedDescription)")
-            return (text, .failed(name, error.shortDescription))
+            return (nil, .failed(name, error.shortDescription))
         } catch {
+            warm?.discard()
             logger.error("Skill \(name) failed, pasting cleaned text: \(error.localizedDescription)")
-            return (text, .failed(name, String(error.localizedDescription.prefix(40))))
+            return (nil, .failed(name, String(error.localizedDescription.prefix(40))))
         }
     }
 
