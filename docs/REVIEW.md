@@ -75,6 +75,15 @@ FluidAudio and mlx-swift-lm are now pinned with `exact:` and
 - **Swift 5 language mode.** Strict Swift 6 concurrency checking produces
   noise from the ML libraries' APIs. The app's own types are actor-isolated
   where it matters (`Transcriber`, `Cleaner` are actors; UI is `@MainActor`).
+- **One dictation kept, in memory only.** Fix Last Dictation needs the audio
+  to listen again, so `Controller.lastDictation` holds the most recent
+  recording at its native rate (a few MB for a normal dictation, up to about
+  58 MB for the 5-minute cap at 48 kHz) plus the raw and pasted text. It is
+  replaced on the next paste and never written to disk. Re-transcribing does
+  not touch `Controller.state`: it refuses while a dictation is in flight
+  and otherwise relies on the `Transcriber` actor to serialise, and it waits
+  on the vocabulary preparation task so a first-ever term is not checked
+  before the CTC model has downloaded.
 
 ## Known limitations
 
@@ -95,7 +104,9 @@ FluidAudio and mlx-swift-lm are now pinned with `exact:` and
 
 - `make test`: `TextRules`, `Cleaner.stripThinking`, `Cleaner.wordCount`,
   `Cleaner.looksSane`, `withTimeout`, `ToneSynth` (note length, headroom,
-  WAV header, every theme defines every cue).
+  WAV header, every theme defines every cue), `Vocabulary` helpers including
+  `addAlias`, and the `Correction` helpers (chips, contiguous selection,
+  alias text, verdict, paste-message hint).
 - `make selftest`: full Parakeet → Qwen3 pipeline on a synthesised sentence
   with fillers and stutters. Expected output removes the fillers and keeps
   the wording.

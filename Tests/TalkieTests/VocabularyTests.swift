@@ -21,6 +21,15 @@ struct VocabularyTests {
         #expect(Vocabulary.add(VocabularyTerm(text: "  "), to: []) == [])
     }
 
+    @Test func addAliasMergesIntoExistingTerm() {
+        let list = [VocabularyTerm(text: "Alfie", aliases: ["Alfy"])]
+        #expect(Vocabulary.addAlias("Alfi", to: "alfie", in: list) == [VocabularyTerm(text: "alfie", aliases: ["Alfy", "Alfi"])])
+        #expect(Vocabulary.addAlias("Minderra", to: "Mindera", in: list) == list + [VocabularyTerm(text: "Mindera", aliases: ["Minderra"])])
+        #expect(Vocabulary.addAlias("alfy", to: "Alfie", in: list) == list)
+        #expect(Vocabulary.addAlias("Mindera", to: "Mindera", in: []) == [VocabularyTerm(text: "Mindera")])
+        #expect(Vocabulary.addAlias("Aly", to: "Al", in: list) == list)
+    }
+
     @Test func removesById() {
         let list = [VocabularyTerm(text: "Alfie"), VocabularyTerm(text: "Mindera")]
         #expect(Vocabulary.remove(id: "alfie", from: list) == [VocabularyTerm(text: "Mindera")])

@@ -24,6 +24,7 @@ final class Controller {
 
     var onStateChange: ((State) -> Void)?
     var onConnectionChange: ((ConnectionState) -> Void)?
+    var onLastDictationChange: ((DictationRecord?) -> Void)?
 
     private let logger = Logger(subsystem: "talkie", category: "controller")
     private let fnKey = FnKeyMonitor()
@@ -35,7 +36,9 @@ final class Controller {
 
     private var modelsReady = false
     private var isLoadingModels = false
-    private var isPreparingVocabulary = false
+    /// The download/session build started by the last vocabulary change, so a
+    /// re-transcription can wait for it rather than run without the new term.
+    private var vocabularyPreparation: Task<Void, Never>?
     private var pressStartedAt: Date?
     private var lastLabel: RecordingLabel.Label?
     private var levelTimer: Timer?
@@ -53,6 +56,11 @@ final class Controller {
 
     private(set) var connection: ConnectionState = .notConfigured {
         didSet { onConnectionChange?(connection) }
+    }
+
+    /// The most recent paste, kept in memory for Fix Last Dictation.
+    private(set) var lastDictation: DictationRecord? {
+        didSet { onLastDictationChange?(lastDictation) }
     }
 
     func start() {
@@ -232,18 +240,32 @@ final class Controller {
         let progress: @Sendable (String) -> Void = { [weak self] detail in
             Task { @MainActor in self?.hud.show(.init(kind: .working, text: detail)) }
         }
-        Task {
+        let previous = vocabularyPreparation
+        vocabularyPreparation = Task {
+            await previous?.value
             await prepareVocabulary(progress: progress)
             if case .idle = state { hud.hide() }
         }
     }
 
+    /// Re-runs Parakeet on a kept recording with the vocabulary now saved, so
+    /// the Fix window can say whether the new spelling is picked up. Waits for
+    /// any vocabulary download first; refuses while a dictation is in flight so
+    /// the two never compete for the models.
+    func retranscribe(_ record: DictationRecord, progress: @escaping @Sendable (String) -> Void) async throws -> Transcription {
+        guard modelsReady else { throw TalkieError.notReady("Models are still loading; the word is saved for next time") }
+        guard case .idle = state else { throw TalkieError.notReady("Talkie is busy, try again in a moment") }
+        if let vocabularyPreparation {
+            progress("preparing vocabulary")
+            await vocabularyPreparation.value
+        }
+        progress("listening again")
+        return try await transcriber.transcribe(record.recording)
+    }
+
     /// Never throws: a failed download is reported, and the next dictation
     /// simply runs without the vocabulary pass.
     private func prepareVocabulary(progress: @escaping @Sendable (String) -> Void) async {
-        guard !isPreparingVocabulary else { return }
-        isPreparingVocabulary = true
-        defer { isPreparingVocabulary = false }
         let terms = Settings.vocabulary
         await transcriber.setVocabulary(terms)
         guard !terms.isEmpty else { return }
@@ -444,14 +466,20 @@ final class Controller {
             }
             logger.info("Final: \(text, privacy: .private)")
 
+            let fixHint = Correction.hudHint(pastesSoFar: Settings.fixHintsShown, outcome: outcome, skill: skillOutcome, fixes: transcription.fixes)
+            if fixHint != nil { Settings.fixHintsShown += 1 }
+            let label = (skillOutcome.pastedLabel ?? outcome.pastedLabel)
+                + Vocabulary.fixedSuffix(transcription.fixes.map(\.term))
+                + (fixHint ?? "")
+            lastDictation = DictationRecord(recording: recording, raw: raw, fixes: transcription.fixes, text: text, outcome: label)
+
             Paster.copy(text)
             try await Task.sleep(for: .milliseconds(pickerShown ? Settings.pickerPasteDelayMilliseconds : Settings.pasteDelayMilliseconds))
             let pasted = Paster.pasteFromClipboard()
             Sounds.pasted()
-            let label = (skillOutcome.pastedLabel ?? outcome.pastedLabel) + Vocabulary.fixedSuffix(transcription.fixes.map(\.term))
             hud.show(
                 .init(kind: .success, text: pasted ? label : "Copied (grant Accessibility to paste)"),
-                autoHideAfter: skillOutcome.hudSeconds ?? outcome.hudSeconds
+                autoHideAfter: fixHint != nil ? 3 : (skillOutcome.hudSeconds ?? outcome.hudSeconds)
             )
             state = .idle
         } catch {

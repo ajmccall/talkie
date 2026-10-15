@@ -4,12 +4,13 @@ import UniformTypeIdentifiers
 import os
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemValidation {
     private let logger = Logger(subsystem: "talkie", category: "app")
     private var statusItem: NSStatusItem!
     private var statusMenuItem: NSMenuItem!
     private var cleanupMenuItem: NSMenuItem!
     private var vocabularyMenuItem: NSMenuItem!
+    private var fixLastMenuItem: NSMenuItem!
     private var skillStatusItem: NSMenuItem!
     private var connectItem: NSMenuItem!
     private var connectClaudeItem: NSMenuItem!
@@ -26,6 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let controller = Controller()
     private let welcome = WelcomeWindow()
     private let vocabulary = VocabularyWindow()
+    private let fixLast = CorrectionWindow()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildStatusItem()
@@ -36,9 +38,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self?.renderSkillSection()
         }
         welcome.retryModels = { [weak self] in self?.controller.reloadModels() }
-        vocabulary.onChange = { [weak self] in
+        let vocabularyChanged: () -> Void = { [weak self] in
             self?.renderVocabularyItem()
             self?.controller.vocabularyChanged()
+        }
+        vocabulary.onChange = vocabularyChanged
+        fixLast.onChange = vocabularyChanged
+        fixLast.verify = { [weak self] record, progress in
+            guard let self else { throw TalkieError.notReady("Talkie is quitting") }
+            return try await self.controller.retranscribe(record, progress: progress)
+        }
+        controller.onLastDictationChange = { [weak self] record in
+            self?.fixLast.lastDictationChanged(record)
         }
         renderVocabularyItem()
         renderSkillSection()
@@ -83,6 +94,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         vocabularyMenuItem = NSMenuItem(title: "Vocabulary…", action: #selector(showVocabulary), keyEquivalent: "")
         vocabularyMenuItem.target = self
         menu.addItem(vocabularyMenuItem)
+
+        fixLastMenuItem = NSMenuItem(title: "Fix Last Dictation…", action: #selector(showFixLast), keyEquivalent: "")
+        fixLastMenuItem.target = self
+        fixLastMenuItem.toolTip = "Add a mis-heard word from the last dictation to the vocabulary"
+        menu.addItem(fixLastMenuItem)
 
         let soundsItem = NSMenuItem(title: "Sounds", action: nil, keyEquivalent: "")
         soundsItem.submenu = buildSoundsMenu()
@@ -459,6 +475,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func showVocabulary() {
         vocabulary.show()
+    }
+
+    /// The menu auto-enables items that have a target, so the Fix item is
+    /// switched off here until there is a dictation to fix.
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        item === fixLastMenuItem ? controller.lastDictation != nil : true
+    }
+
+    @objc private func showFixLast() {
+        guard let record = controller.lastDictation else { return }
+        fixLast.show(record)
     }
 
     @objc private func toggleCleanup() {

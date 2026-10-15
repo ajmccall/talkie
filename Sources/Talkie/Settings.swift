@@ -32,6 +32,15 @@ enum Settings {
         set { defaults.set(Vocabulary.encode(newValue), forKey: "vocabulary") }
     }
 
+    /// How many paste messages have pointed at Fix Last Dictation so far.
+    static var fixHintsShown: Int {
+        get { defaults.integer(forKey: "fixHintsShown") }
+        set { defaults.set(newValue, forKey: "fixHintsShown") }
+    }
+
+    /// The hint stops after this many plain pastes; the menu item stays.
+    static let fixHintCount = 10
+
     // MARK: - Optional skill post-processing (Fn+Shift)
 
     /// The connected model account, or nil when skills are off.

@@ -10,6 +10,7 @@ release notes when `scripts/release.sh` runs; `Unreleased` must be empty then.
 - Claude Code skills default to `haiku` with low effort; a **Model** submenu offers `sonnet` and `opus`. A model chosen earlier is kept.
 
 ### Added
+- **Fix Last Dictation…** in the menu bar: the last transcript as clickable words. Click the mis-heard word, type what it should have been, and it is added to the Vocabulary with that spelling as a known mis-hearing; Talkie then listens to the same recording again and says whether the new spelling is picked up. The recording is kept in memory only until the next dictation. The paste message points at the item for the first ten dictations.
 - **Vocabulary…** window in the menu bar: names and unusual words Parakeet should recognise, each with the spellings it usually produces instead. Matching is acoustic: a small extra Parakeet CTC model (about 100 MB, downloaded when the first word is added) listens to the recording again and a word is only swapped when the sound supports it. The same list is given to Qwen3 so spelling stays consistent, and the paste message says what was fixed.
 - `make selftest` accepts `VOCAB=<list file>` (one term per line, `Alfie: Alfy, Alfi`) to try the vocabulary pass on a recording.
 - `scripts/skill-timing.sh` to measure cold versus pre-warmed skill runs.

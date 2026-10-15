@@ -47,6 +47,15 @@ enum Vocabulary {
         return result
     }
 
+    /// Adds `alias` to the term with that text (ignoring case), creating the
+    /// term when it is missing. The list comes back unchanged when the alias is
+    /// already known, equals the term, or the term is invalid.
+    static func addAlias(_ alias: String, to termText: String, in list: [VocabularyTerm]) -> [VocabularyTerm] {
+        let id = termText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let existing = list.first { $0.id == id }
+        return add(VocabularyTerm(text: termText, aliases: (existing?.aliases ?? []) + [alias]), to: list)
+    }
+
     static func remove(id: String, from list: [VocabularyTerm]) -> [VocabularyTerm] {
         list.filter { $0.id != id }
     }
