@@ -164,7 +164,7 @@ FluidAudio and mlx-swift-lm are now pinned with `exact:` and
 ## Distribution
 
 - Releases are zips on GitHub Releases plus a cask in `ajmccall/homebrew-tap`,
-  cut locally by `scripts/release.sh` (see README, Releasing). Updates come
+  cut locally by `scripts/release.sh` (see docs/DEVELOPMENT.md, Releasing). Updates come
   through `brew upgrade`; there is no in-app updater.
 - Signing today is Apple Development (or ad-hoc), so downloads are quarantined
   and Gatekeeper rejects them until `xattr -dr com.apple.quarantine` (Homebrew
