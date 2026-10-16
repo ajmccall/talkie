@@ -73,8 +73,21 @@ enum SkillResponse {
 
     static func decode(_ data: Data) throws -> String {
         guard let payload = try? JSONDecoder().decode(Payload.self, from: data) else { throw ProviderError.invalidResponse }
-        let text = payload.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = unwrap(payload.text.trimmingCharacters(in: .whitespacesAndNewlines))
         guard !text.isEmpty else { throw ProviderError.invalidResponse }
+        return text
+    }
+
+    /// Small models told to "return only the JSON object" sometimes put that
+    /// whole object inside the schema's text field, so peel off any layers of
+    /// the same `{"text": …}` shape. Text that merely starts with a brace stays.
+    private static func unwrap(_ text: String) -> String {
+        var text = text
+        for _ in 0..<3 {
+            guard text.hasPrefix("{"),
+                  let inner = try? JSONDecoder().decode(Payload.self, from: Data(text.utf8)) else { break }
+            text = inner.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
         return text
     }
 }
@@ -82,6 +95,8 @@ enum SkillResponse {
 /// How the skill step ended, so the paste message can say when it was skipped.
 enum SkillOutcome: Equatable {
     case notRequested
+    /// The picker closed without a choice (Escape or a click elsewhere).
+    case skipped
     case applied(String)
     case timedOut(String)
     case failed(String, String)
@@ -91,6 +106,7 @@ enum SkillOutcome: Equatable {
     var pastedLabel: String? {
         switch self {
         case .notRequested: return nil
+        case .skipped: return "Pasted as-is (no skill)"
         case .applied(let skill): return "Pasted via \(skill)"
         case .timedOut(let skill): return "Pasted (\(skill) timed out)"
         case .failed(let skill, let reason): return "Pasted (\(skill) failed: \(reason))"
@@ -102,7 +118,7 @@ enum SkillOutcome: Equatable {
     var hudSeconds: TimeInterval? {
         switch self {
         case .notRequested: return nil
-        case .applied: return 2
+        case .applied, .skipped: return 2
         case .timedOut, .failed, .notConnected, .noSkill: return 3.5
         }
     }

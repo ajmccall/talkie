@@ -55,6 +55,31 @@ struct SkillResponseTests {
         #expect(try SkillResponse.decode(Data(#"{"text":"  Done.\n"}"#.utf8)) == "Done.")
     }
 
+    /// Seen with haiku on low effort: the schema's text field held a whole
+    /// `{"text": …}` document, so the JSON and its `\n` escapes were pasted.
+    @Test func unwrapsJsonNestedInTheTextField() throws {
+        let wrapped = #"{"text":"{\"text\": \"Hi all.\\n\\nThanks.\"}"}"#
+        #expect(try SkillResponse.decode(Data(wrapped.utf8)) == "Hi all.\n\nThanks.")
+        let twice = #"{"text":"{\"text\":\"{\\\"text\\\":\\\"Deep.\\\"}\"}"}"#
+        #expect(try SkillResponse.decode(Data(twice.utf8)) == "Deep.")
+        let padded = #"{"text":"  {\"text\":\"Padded.\"}\n"}"#
+        #expect(try SkillResponse.decode(Data(padded.utf8)) == "Padded.")
+    }
+
+    @Test func keepsTextThatOnlyLooksLikeJson() throws {
+        for text in [#"{braces} are fine"#, #"{\"name\":\"not ours\"}"#] {
+            let json = #"{"text":""# + text + #""}"#
+            let expected = try JSONDecoder().decode([String: String].self, from: Data(json.utf8))["text"]
+            #expect(try SkillResponse.decode(Data(json.utf8)) == expected)
+        }
+    }
+
+    @Test func rejectsAWrappedEmptyText() {
+        #expect(throws: ProviderError.invalidResponse) {
+            try SkillResponse.decode(Data(#"{"text":"{\"text\":\" \"}"}"#.utf8))
+        }
+    }
+
     @Test func rejectsBadPayloads() {
         for json in [#"{"text":""}"#, #"{"text":"  "}"#, #"{"message":"x"}"#, "Done.", "{}", "```json\n{\"text\":\"x\"}\n```"] {
             #expect(throws: ProviderError.invalidResponse) { try SkillResponse.decode(Data(json.utf8)) }
@@ -176,6 +201,7 @@ struct SkillOutcomeTests {
         #expect(SkillOutcome.failed("reword", "signed out").pastedLabel == "Pasted (reword failed: signed out)")
         #expect(SkillOutcome.notConnected.pastedLabel == "Pasted (connect a model account first)")
         #expect(SkillOutcome.noSkill.pastedLabel == "Pasted (choose a skill first)")
+        #expect(SkillOutcome.skipped.pastedLabel == "Pasted as-is (no skill)")
     }
 
     @Test func fallbacksStayLonger() {
@@ -183,6 +209,7 @@ struct SkillOutcomeTests {
         #expect(SkillOutcome.applied("r").hudSeconds == 2)
         #expect(SkillOutcome.failed("r", "x").hudSeconds == 3.5)
         #expect(SkillOutcome.notConnected.hudSeconds == 3.5)
+        #expect(SkillOutcome.skipped.hudSeconds == 2)
     }
 
     @Test func recordingLabelShowsSkill() {

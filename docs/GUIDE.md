@@ -78,7 +78,10 @@ and shows "Transcribing…" then "Ready" while Talkie works.
   it applies as soon as the text is there.
 - **↑ ↓**, the mouse, or the number keys **1–9** change the highlight.
 - **Escape**, or clicking into another window, pastes the transcription
-  as-is.
+  as-is, and the HUD says "Pasted as-is (no skill)".
+
+The picker only appears once you let go of Fn. An Enter pressed while Fn is
+still held goes to the app you are typing into, not the picker.
 
 The picker takes keyboard focus without activating Talkie, so the app you
 were in stays frontmost and receives the paste. Fn does nothing while the

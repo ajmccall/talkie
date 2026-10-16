@@ -15,6 +15,10 @@ release notes when `scripts/release.sh` runs; `Unreleased` must be empty then.
 - `make selftest` accepts `VOCAB=<list file>` (one term per line, `Alfie: Alfy, Alfi`) to try the vocabulary pass on a recording.
 - `scripts/skill-timing.sh` to measure cold versus pre-warmed skill runs.
 
+### Fixed
+- A skill reply could paste as raw JSON (`{"text": "…\n\n…"}`) when the model wrapped its answer twice. Talkie now unwraps it.
+- Closing the skill picker without choosing now says "Pasted as-is (no skill)" instead of a plain "Pasted", so a skipped skill is visible.
+
 ## 0.2.0 - 2026-10-14
 
 ### Added

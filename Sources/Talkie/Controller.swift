@@ -432,6 +432,7 @@ final class Controller {
                 switch result {
                 case .asIs:
                     logger.info("Skill picker dismissed; pasting as-is")
+                    skillOutcome = .skipped
                     inFlight?.task.cancel()
                     discardWarmTransform()
                     state = .processing("Pasting…")
