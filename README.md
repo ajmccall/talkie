@@ -23,6 +23,32 @@ System Settings → Privacy & Security → "Open Anyway" does the same job.
 
 Update with `brew upgrade --cask talkie`.
 
+### If Accessibility is on but Talkie only copies
+
+After an install, reinstall or upgrade, macOS can occasionally keep an old
+Accessibility record: Talkie puts the transcript on the clipboard but cannot
+send ⌘V, even though its switch in System Settings appears to be on. Remove
+and grant the permission again:
+
+1. Quit Talkie.
+2. Open System Settings → Privacy & Security → Accessibility.
+3. Select Talkie and click **−** to remove it. Do not only turn the switch off.
+4. Open `/Applications/Talkie.app` again and allow Accessibility when asked.
+   If it does not reappear in the list, click **+** and select that app.
+5. Wait a couple of seconds, then dictate again.
+
+The same reset can be done in Terminal:
+
+```sh
+pkill -x Talkie 2>/dev/null || true
+tccutil reset Accessibility com.alasdairmccall.talkie
+open /Applications/Talkie.app
+```
+
+This resets only Talkie's Accessibility approval; macOS still requires you to
+allow it again. The clipboard copy is intentional fallback behaviour whenever
+Talkie does not have the live permission needed to paste.
+
 ## First run
 
 Talkie lives in the menu bar and opens a Welcome window with a checklist:
