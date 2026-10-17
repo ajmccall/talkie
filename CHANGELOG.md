@@ -5,6 +5,9 @@ release notes when `scripts/release.sh` runs; `Unreleased` must be empty then.
 
 ## Unreleased
 
+### Changed
+- Documented how to remove and re-grant a stale Accessibility record when an install, reinstall or Homebrew upgrade leaves Talkie able to copy but not paste.
+
 ## 0.3.0 - 2026-10-17
 
 ### Changed
