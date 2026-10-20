@@ -123,6 +123,14 @@ enum Settings {
     /// headroom for slower Macs.
     static let cleanupTimeoutSeconds: TimeInterval = 30
 
+    /// Qwen3 is unloaded after this long without a dictation, freeing about
+    /// 2.2 GB. It reloads from disk as soon as Fn goes down, which takes well
+    /// under a second, so it is ready by the time the user stops speaking.
+    static let cleanerIdleUnloadSeconds: TimeInterval = 120
+
+    /// How often the idle check runs. Precision does not matter here.
+    static let cleanerIdleCheckSeconds: TimeInterval = 30
+
     /// If the skill provider has not answered within this time, the cleaned
     /// transcript is pasted. Codex takes 5–20 s on a short message.
     static let skillTimeoutSeconds: TimeInterval = 90

@@ -44,6 +44,7 @@ final class Controller {
     private var levelTimer: Timer?
     private var maxDurationTimer: Timer?
     private var accessibilityTimer: Timer?
+    private var idleUnloadTimer: Timer?
     private var provider: (any ModelProvider)?
     private var providerExecutable: URL?
     private var connectionTask: Task<Void, Never>?
@@ -79,6 +80,7 @@ final class Controller {
         levelTimer?.invalidate()
         maxDurationTimer?.invalidate()
         accessibilityTimer?.invalidate()
+        idleUnloadTimer?.invalidate()
         if recorder.isRecording { _ = recorder.stop() }
         discardWarmTransform()
     }
@@ -223,11 +225,24 @@ final class Controller {
             modelsReady = true
             state = .idle
             hud.show(.init(kind: .success, text: "Ready. Hold Fn to dictate."), autoHideAfter: 2.5)
+            startIdleUnloadTimer()
         } catch {
             logger.error("Model load failed: \(error.localizedDescription)")
             state = .failed("Model load failed. Press Fn to retry.")
             hud.show(.init(kind: .failure, text: "Model load failed: \(error.localizedDescription)"), autoHideAfter: 6)
             Sounds.failed()
+        }
+    }
+
+    /// Unloads Qwen3 after a quiet spell. Checked only while idle, so a long
+    /// recording or a skill run never loses the model it is about to use.
+    private func startIdleUnloadTimer() {
+        idleUnloadTimer?.invalidate()
+        idleUnloadTimer = Timer.scheduledTimer(withTimeInterval: Settings.cleanerIdleCheckSeconds, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, case .idle = self.state else { return }
+                await self.cleaner.unloadIfIdle(for: Settings.cleanerIdleUnloadSeconds)
+            }
         }
     }
 
@@ -305,6 +320,8 @@ final class Controller {
         }
         pressStartedAt = Date()
         state = .recording
+        let cleaner = self.cleaner
+        Task { await cleaner.prepare() }
         Sounds.recordingStarted()
         hud.show(.init(kind: .recording, text: "Listening…"))
 

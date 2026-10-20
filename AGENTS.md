@@ -63,7 +63,9 @@ whether a bug is a known limitation, [docs/REVIEW.md](docs/REVIEW.md).
 - `Cleaner.swift`: Qwen3 prompt, sampling, model id
   (`LLMRegistry.qwen3_4b_4bit`) and `looksSane`, which rejects output that
   answered instead of edited. A new `ChatSession` per dictation so no history
-  bleeds between them.
+  bleeds between them. Also the idle unload: `Controller` drops the weights
+  after `Settings.cleanerIdleUnloadSeconds` and calls `prepare()` on Fn down
+  so the reload overlaps speech.
 - `TextRules.swift`: deterministic formatting rules applied after the model.
   New formatting rules go here, not in the prompt.
 - `Paster.swift`: clipboard then ⌘V. The clipboard is left holding the text

@@ -6,6 +6,7 @@ release notes when `scripts/release.sh` runs; `Unreleased` must be empty then.
 ## Unreleased
 
 ### Changed
+- Talkie uses about 2.2 GB less memory when idle: Qwen3 is unloaded after 2 minutes without a dictation and loaded again from disk the moment Fn goes down, while you are still speaking. Spare GPU buffers are also released after each dictation.
 - Documented how to remove and re-grant a stale Accessibility record when an install, reinstall or Homebrew upgrade leaves Talkie able to copy but not paste.
 
 ## 0.3.0 - 2026-10-17

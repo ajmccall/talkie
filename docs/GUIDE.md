@@ -132,6 +132,9 @@ halves the volume.
 - Fn pressed while models load or the previous dictation is still processing
   shows a message and does nothing. While the skill picker is open, Fn shows
   "Still working on the last one…".
+- After 2 minutes without a dictation, Qwen3 is unloaded to free about 2.2 GB.
+  The next Fn press loads it again from disk while you speak (under a second
+  on an M-series Mac), so a dictation longer than that sees no extra wait.
 - The clipboard is deliberately left holding the dictated text.
 - The last dictation (audio and text) stays in memory for Fix Last Dictation
   and is replaced by the next one; nothing is written to disk.
