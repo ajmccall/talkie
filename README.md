@@ -1,5 +1,11 @@
 # Talkie
 
+> **This project has been superseded.** Talkie is no longer developed: the work
+> continues in [ajmccall/hex](https://github.com/ajmccall/hex), a personal fork
+> of [anomalyco/hex](https://github.com/anomalyco/hex), which does on-device
+> dictation on macOS, Windows and Linux. This repository stays public and the
+> existing releases stay where they are, but expect no further changes here.
+
 **Hold Fn, talk, let go.** Talkie transcribes what you said on-device, tidies
 it up with a small local language model, and pastes it wherever your cursor
 is. No accounts, no cloud, no subscription.
@@ -93,6 +99,9 @@ connected, under your own login. On an M-series Mac, 8 seconds of speech
 transcribes in about 0.1 s and cleans up in about 0.7 s.
 
 ## Contributing
+
+Talkie is not developed any more, so please send changes and bug reports to
+[ajmccall/hex](https://github.com/ajmccall/hex) instead.
 
 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) covers building from source and
 releasing. [docs/REVIEW.md](docs/REVIEW.md) lists the deliberate choices and
