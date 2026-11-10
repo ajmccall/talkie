@@ -5,6 +5,10 @@ release notes when `scripts/release.sh` runs; `Unreleased` must be empty then.
 
 ## Unreleased
 
+## 0.3.1 - 2026-11-10
+
+This is the last release of Talkie. See the first line below.
+
 ### Changed
 - Talkie is superseded by [ajmccall/hex](https://github.com/ajmccall/hex); the README now says so at the top and in Contributing. Nothing in the app changed.
 - Talkie uses about 2.2 GB less memory when idle: Qwen3 is unloaded after 2 minutes without a dictation and loaded again from disk the moment Fn goes down, while you are still speaking. Spare GPU buffers are also released after each dictation.
